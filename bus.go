@@ -20,7 +20,7 @@ func GetConsumerId() string {
 }
 
 type Event struct {
-	Id        string          `json:"id"`
+	Id        string          `json:"id,omitempty"`
 	Subject   string          `json:"subject"`
 	Reply     string          `json:"reply,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
@@ -28,10 +28,7 @@ type Event struct {
 }
 
 func NewEvent(opts ...EventOpt) (*Event, error) {
-	evt := &Event{
-		Id:        GetEventId(),
-		CreatedAt: time.Now(),
-	}
+	evt := &Event{}
 
 	for _, opt := range opts {
 		err := opt.configureEvent(evt)
@@ -136,9 +133,23 @@ func WithDurable(durable string) ConsumerOpt {
 	})
 }
 
-func WithLastEventId(lastEventId string) ConsumerOpt {
+func WithFromBeginning() ConsumerOpt {
 	return consumerOptFn(func(c *Consumer) error {
-		c.LastEventId = lastEventId
+		c.LastEventId = "all"
+		return nil
+	})
+}
+
+func WithFromNewest() ConsumerOpt {
+	return consumerOptFn(func(c *Consumer) error {
+		c.LastEventId = "normal"
+		return nil
+	})
+}
+
+func WithFromEventId(eventId string) ConsumerOpt {
+	return consumerOptFn(func(c *Consumer) error {
+		c.LastEventId = eventId
 		return nil
 	})
 }

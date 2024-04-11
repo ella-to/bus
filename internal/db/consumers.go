@@ -60,13 +60,20 @@ func SaveConsumer(ctx context.Context, conn *sqlite.Conn, c *bus.Consumer) (err 
 	defer conn.Save(&err)()
 
 	err = func() error {
+
+		var lastEventId any
+
+		if c.LastEventId != "" {
+			lastEventId = c.LastEventId
+		}
+
 		stmt, err := conn.Prepare(ctx,
-			`INSERT OR IGNORE INTO consumers 
-				(id, subject) 
+			`INSERT INTO consumers 
+				(id, subject, last_event_id) 
 			VALUES 
-				(?, ?)
-			;`,
-			c.Id, c.Subject,
+				(?, ?, ?)
+			ON CONFLICT (id) DO NOTHING;`,
+			c.Id, c.Subject, lastEventId,
 		)
 		if err != nil {
 			return err

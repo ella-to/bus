@@ -27,9 +27,9 @@ func (s *Server) ackEvent(ctx context.Context, consumerId string, eventId string
 	return
 }
 
-func (s *Server) getNextEvent(ctx context.Context, consumerId string) (event *bus.Event, err error) {
+func (s *Server) getNextEvent(ctx context.Context, consumerId string, lastEventId string) (event *bus.Event, err error) {
 	s.dbw.Submit(func(conn *sqlite.Conn) {
-		event, err = db.LoadNotAckedEvent(ctx, conn, consumerId)
+		event, err = db.LoadNotAckedEvent(ctx, conn, consumerId, lastEventId)
 	})
 	return
 }
@@ -48,7 +48,7 @@ func (s *Server) createOrGetConsumer(ctx context.Context, id string, subject str
 		bus.WithDurable(id),
 		bus.WithSubject(subject),
 		bus.WithQueue(queueName),
-		bus.WithLastEventId(lastEventId),
+		bus.WithFromEventId(lastEventId),
 	)
 	if err != nil {
 		return nil, err

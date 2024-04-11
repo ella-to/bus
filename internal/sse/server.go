@@ -25,7 +25,7 @@ var pushContent = [][]byte{
 	[]byte("id: "),
 	[]byte("\nevent: "),
 	[]byte("\ndata: "),
-	[]byte("\n\n"),
+	[]byte("\n"),
 }
 
 func (p *pusher) Push(ctx context.Context, event string, data any) error {

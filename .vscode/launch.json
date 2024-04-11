@@ -13,5 +13,14 @@
       "cwd": ".",
       "env": {}
     },
+    {
+      "name": "bus",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "./cmd/bus/main.go",
+      "cwd": ".",
+      "env": {}
+    },
   ]
 }

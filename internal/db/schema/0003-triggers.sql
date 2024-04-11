@@ -3,11 +3,13 @@
 --
 --
 --
-CREATE TRIGGER IF NOT EXISTS initial_consumer_trigger
+CREATE TRIGGER IF NOT EXISTS initial_consumer_insert_trigger
 --
 AFTER INSERT ON consumers
 --
-FOR EACH ROW BEGIN
+FOR EACH ROW
+--
+BEGIN
 --
 INSERT INTO
     consumers_events (consumer_id, event_id)
@@ -21,22 +23,7 @@ FROM
     LEFT JOIN queues ON queues.name = queues_consumers.queue_name
 WHERE
     queues.name IS NULL
-    AND events.id > COALESCE(
-        (
-            SELECT
-                event_id
-            FROM
-                consumers_events
-            WHERE
-                consumer_id = NEW.id
-                AND acked = 0
-            ORDER BY
-                event_id DESC
-            LIMIT
-                1
-        ),
-        ''
-    );
+    AND events.id > COALESCE(NEW.last_event_id, '');
 
 END;
 
@@ -49,7 +36,9 @@ CREATE TRIGGER IF NOT EXISTS append_consumers_events_trigger
 --
 AFTER INSERT ON events
 --
-FOR EACH ROW BEGIN
+FOR EACH ROW
+--
+BEGIN
 --
 INSERT INTO
     consumers_events (consumer_id, event_id)
@@ -118,7 +107,9 @@ CREATE TRIGGER IF NOT EXISTS events_notification_trigger
 --
 AFTER INSERT ON consumers_events
 --
-FOR EACH ROW BEGIN
+FOR EACH ROW
+--
+BEGIN
 --
 -- Increment the count_messages of the consumer, this is impoertant for
 -- load balancing the consumers if they are using the same queue

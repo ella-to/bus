@@ -165,17 +165,7 @@ func LoadLastConsumerEvent(ctx context.Context, conn *sqlite.Conn, consumerId st
 	return event, nil
 }
 
-func LoadNotAckedEvent(ctx context.Context, conn *sqlite.Conn, consumerId string) (*bus.Event, error) {
-	lastEvent, err := LoadLastConsumerEvent(ctx, conn, consumerId)
-	if err != nil && err != ErrEventNotFound {
-		return nil, err
-	}
-
-	lastEventId := ""
-	if lastEvent != nil {
-		lastEventId = lastEvent.Id
-	}
-
+func LoadNotAckedEvent(ctx context.Context, conn *sqlite.Conn, consumerId string, lastEventId string) (*bus.Event, error) {
 	sql := `
 	SELECT 
 		events.id AS id,

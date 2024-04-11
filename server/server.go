@@ -55,6 +55,7 @@ func (s *Server) publishHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Event-Id", evt.Id)
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -65,6 +66,10 @@ func (s *Server) consumeHandler(w http.ResponseWriter, r *http.Request) {
 	qs := r.URL.Query()
 
 	subject := qs.Get("subject")
+	if subject == "" {
+		http.Error(w, "subject is required", http.StatusBadRequest)
+		return
+	}
 	subject = strings.ReplaceAll(subject, "*", "%")
 
 	queueName := qs.Get("queue")
@@ -151,13 +156,15 @@ Outerloop:
 		case <-ctx.Done():
 			return
 		default:
-			event, err := s.getNextEvent(ctx, c.Id)
+			event, err := s.getNextEvent(ctx, c.Id, lastEventId)
 			if errors.Is(err, db.ErrEventNotFound) {
 				break Outerloop
 			} else if err != nil {
 				pusher.Push(ctx, "error", err)
 				continue
 			}
+
+			lastEventId = event.Id
 
 			err = pusher.Push(ctx, "event", event)
 			if err != nil {
@@ -210,7 +217,7 @@ func (s *Server) notify() func(string, *bus.Event) {
 			consumerId: consumerId,
 		}:
 		default:
-			slog.Error("failed to push event to consumers map", "event", event)
+			slog.Error("failed to push event to consumers map", "consumer_id", consumerId, "event_id", event.Id)
 		}
 	}
 }
@@ -302,7 +309,7 @@ func New(ctx context.Context, opts ...Opt) (*Server, error) {
 
 	s := &Server{
 		consumersMap:   bus.NewConsumersEventMap(conf.consumerQueueSize),
-		incomingEvents: make(chan *incomingEvent),
+		incomingEvents: make(chan *incomingEvent, conf.incomingEventsBufferSize),
 		tick:           track.Create(conf.tickTimeout, conf.tickSize),
 	}
 
