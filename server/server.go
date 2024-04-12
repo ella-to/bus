@@ -55,7 +55,10 @@ func (s *Server) publishHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Event-Id", evt.Id)
+	header := w.Header()
+
+	header.Set("Event-Id", evt.Id)
+	header.Set("Event-CreatedAt", evt.CreatedAt.Format(time.RFC3339))
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -134,7 +137,7 @@ func (s *Server) consumeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		// NOTE: since queue will be keep track of lastEventId, we can set it to empty
 		// so the consumer doens't get confused
-		lastEventId = ""
+		// lastEventId = ""
 	}
 
 	c, err := s.createOrGetConsumer(ctx, id, subject, queueName, lastEventId)

@@ -17,7 +17,7 @@ func main() {
 
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
-	handler, err := server.New(ctx)
+	handler, err := server.New(ctx, server.WithDBPath("./bus.db"))
 	if err != nil {
 		slog.Error("failed to initilaize server", "error", err.Error())
 		return

@@ -93,6 +93,39 @@ func SaveConsumer(ctx context.Context, conn *sqlite.Conn, c *bus.Consumer) (err 
 			return nil
 		}
 
+		stmt, err := conn.Prepare(ctx, `
+			UPDATE consumers 
+			SET
+				count_messages = 1
+			WHERE
+				count_messages != 0
+				AND id IN (
+					SELECT 
+						consumer_id 
+					FROM 
+						queues_consumers 
+					WHERE queue_name = ?
+				)
+			;
+		`, c.Queue)
+		if err != nil {
+			return err
+		}
+
+		defer stmt.Finalize()
+
+		_, err = stmt.Step()
+		return err
+	}()
+	if err != nil {
+		return err
+	}
+
+	err = func() error {
+		if c.Queue == "" {
+			return nil
+		}
+
 		stmt, err := conn.Prepare(ctx,
 			`INSERT OR IGNORE INTO queues_consumers 
 				(queue_name, consumer_id)

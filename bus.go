@@ -225,6 +225,6 @@ func NewConsumersEventMap(size int) *ConsumersEventMap {
 }
 
 type Stream interface {
-	Publish(ctx context.Context, evt *Event) (iter.Seq2[*Event, error], error)
-	Consume(ctx context.Context, consumerOpts ...ConsumerOpt) (iter.Seq2[*Event, error], error)
+	Publish(ctx context.Context, evt *Event) error
+	Consume(ctx context.Context, consumerOpts ...ConsumerOpt) iter.Seq2[*Event, error]
 }

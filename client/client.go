@@ -8,6 +8,7 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"time"
 
 	"ella.to/bus.go"
 	"ella.to/bus.go/internal/sse"
@@ -20,7 +21,7 @@ type Client struct {
 
 var _ bus.Stream = (*Client)(nil)
 
-func (c *Client) Publish(ctx context.Context, evt *bus.Event) (iter.Seq2[*bus.Event, error], error) {
+func (c *Client) Publish(ctx context.Context, evt *bus.Event) error {
 	pr, pw := io.Pipe()
 	go func() {
 		err := json.NewEncoder(pw).Encode(evt)
@@ -35,29 +36,33 @@ func (c *Client) Publish(ctx context.Context, evt *bus.Event) (iter.Seq2[*bus.Ev
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, pr)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if resp.StatusCode != http.StatusAccepted {
-		return nil, fmt.Errorf("failed to publish event")
+		return fmt.Errorf("failed to publish event")
 	}
 
 	evt.Id = resp.Header.Get("Event-Id")
+	evt.CreatedAt, err = time.Parse(time.RFC3339, resp.Header.Get("Event-Created-At"))
+	if err != nil {
+		return err
+	}
 
 	defer resp.Body.Close()
 
-	return nil, nil
+	return nil
 }
 
-func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) (iter.Seq2[*bus.Event, error], error) {
+func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.Seq2[*bus.Event, error] {
 	consumer, err := bus.NewConsumer(consumerOpts...)
 	if err != nil {
-		return nil, err
+		return newIterErr(err)
 	}
 
 	qs := url.Values{}
@@ -77,19 +82,15 @@ func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) (
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return newIterErr(err)
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return newIterErr(err)
 	}
 
 	ctx, cancel := context.WithCancel(req.Context())
-	go func() {
-		<-ctx.Done()
-		fmt.Println("closing response body")
-	}()
 
 	events := sse.In[bus.Event](ctx, resp.Body)
 
@@ -101,12 +102,18 @@ func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) (
 				break
 			}
 		}
-	}, nil
+	}
 }
 
 func New(addr string) *Client {
 	return &Client{
 		addr: addr,
 		http: &http.Client{},
+	}
+}
+
+func newIterErr(err error) iter.Seq2[*bus.Event, error] {
+	return func(yield func(*bus.Event, error) bool) {
+		yield(nil, err)
 	}
 }
