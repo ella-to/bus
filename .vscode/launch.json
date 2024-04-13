@@ -14,11 +14,11 @@
       "env": {}
     },
     {
-      "name": "bus",
+      "name": "request-reply",
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "./cmd/bus/main.go",
+      "program": "./examples/request-reply/main.go",
       "cwd": ".",
       "env": {}
     },
