@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"reflect"
 	"sync"
 	"time"
 
@@ -248,7 +249,7 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 				return resp, err
 			}
 
-			err = json.Unmarshal(evt.Data, &resp)
+			resp, err = jsonUnmarshal[Resp](evt.Data)
 			if err != nil {
 				return resp, err
 			}
@@ -267,8 +268,7 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 				return
 			}
 
-			var req Req
-			err = json.Unmarshal(evt.Data, &req)
+			req, err := jsonUnmarshal[Req](evt.Data)
 			if err != nil {
 				return
 			}
@@ -289,4 +289,25 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 			}
 		}
 	}()
+}
+
+func isPointer(v any) bool {
+	t := reflect.TypeOf(v)
+	return t.Kind() == reflect.Ptr
+}
+
+func jsonUnmarshal[T any](data json.RawMessage) (v T, err error) {
+	if isPointer(v) {
+		v = initializePointer(v)
+		err = json.Unmarshal(data, v)
+		return v, err
+	}
+
+	err = json.Unmarshal(data, &v)
+	return v, err
+}
+
+func initializePointer[T any](v T) T {
+	t := reflect.TypeOf(v)
+	return reflect.New(t.Elem()).Interface().(T)
 }

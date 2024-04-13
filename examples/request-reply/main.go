@@ -22,13 +22,13 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	bus.Reply(ctx, c, "func.sum", func(ctx context.Context, req Req) (Resp, error) {
-		return Resp{Result: req.A + req.B}, nil
+	bus.Reply(ctx, c, "func.sum", func(ctx context.Context, req *Req) (*Resp, error) {
+		return &Resp{Result: req.A + req.B}, nil
 	})
 
-	fn := bus.Request[Req, Resp](c, "func.sum")
+	fn := bus.Request[*Req, *Resp](c, "func.sum")
 
-	resp, err := fn(ctx, Req{A: 1, B: 2})
+	resp, err := fn(ctx, &Req{A: 1, B: 2})
 	if err != nil {
 		panic(err)
 	}
