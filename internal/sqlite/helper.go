@@ -2,7 +2,13 @@ package sqlite
 
 import (
 	"strings"
+	"time"
 )
+
+func LoadTime(stmt *Stmt, key string) time.Time {
+	value := stmt.GetInt64(key)
+	return time.Unix(value, 0)
+}
 
 func Placeholders(count int) string {
 	var sb strings.Builder

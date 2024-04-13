@@ -18,7 +18,7 @@ SELECT
     events.id AS event_id
 FROM
     events
-    LEFT JOIN consumers ON events.subject LIKE consumers.subject
+    INNER JOIN consumers ON events.subject LIKE consumers.subject
     LEFT JOIN queues_consumers ON queues_consumers.consumer_id = consumers.id
     LEFT JOIN queues ON queues.name = queues_consumers.queue_name
 WHERE

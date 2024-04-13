@@ -41,7 +41,7 @@ func (fn NotifyFunc) Step(ctx sqlite.Context, args []sqlite.Value) error {
 	size := args[2].Int64()
 	data := make([]byte, size)
 	copy(data, args[3].Blob())
-	createdAt := time.Unix(0, args[4].Int64())
+	createdAt := time.Unix(args[4].Int64(), 0)
 	consumerId := args[5].Text()
 
 	_ = size

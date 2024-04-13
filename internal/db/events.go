@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"ella.to/bus.go"
 	"ella.to/bus.go/internal/sqlite"
@@ -31,7 +30,7 @@ func loadNextEvent(stmt *sqlite.Stmt) (*bus.Event, error) {
 		Subject:   stmt.GetText("subject"),
 		Reply:     stmt.GetText("reply"),
 		Data:      make(json.RawMessage, size),
-		CreatedAt: time.Unix(0, stmt.GetInt64("created_at")),
+		CreatedAt: sqlite.LoadTime(stmt, "created_at"),
 	}
 
 	n := stmt.GetBytes("data", event.Data)
