@@ -23,6 +23,7 @@ FROM
     LEFT JOIN queues ON queues.name = queues_consumers.queue_name
 WHERE
     queues.name IS NULL
+    AND consumers.id = NEW.id
     AND events.id > COALESCE(NEW.last_event_id, '');
 
 END;
