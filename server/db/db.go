@@ -11,7 +11,7 @@ import (
 func New(ctx context.Context, notify NotifyFunc, opts ...sqlite.OptionFunc) (*sqlite.Database, error) {
 	opts = append(opts, sqlite.WithFunctions(map[string]*sqlite.FunctionImpl{
 		"notify": {
-			NArgs: 6,
+			NArgs: 8,
 			MakeAggregate: func(ctx sqlite.Context) (sqlite.AggregateFunction, error) {
 				return notify, nil
 			},
@@ -38,19 +38,21 @@ type NotifyFunc func(consumerId string, event *bus.Event)
 func (fn NotifyFunc) Step(ctx sqlite.Context, args []sqlite.Value) error {
 	id := args[0].Text()
 	subject := args[1].Text()
-	size := args[2].Int64()
+	reply := args[2].Text()
+	size := args[3].Int64()
 	data := make([]byte, size)
-	copy(data, args[3].Blob())
-	createdAt := time.Unix(args[4].Int64(), 0)
-	consumerId := args[5].Text()
-
-	_ = size
+	copy(data, args[4].Blob())
+	createdAt := time.Unix(args[5].Int64(), 0)
+	expiresAt := time.Unix(args[6].Int64(), 0)
+	consumerId := args[7].Text()
 
 	fn(consumerId, &bus.Event{
 		Id:        id,
 		Subject:   subject,
+		Reply:     reply,
 		Data:      data,
 		CreatedAt: createdAt,
+		ExpiresAt: expiresAt,
 	})
 
 	return nil

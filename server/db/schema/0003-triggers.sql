@@ -128,9 +128,11 @@ SELECT
     notify (
         id,
         subject,
+        reply,
         size,
         data,
         created_at,
+        expires_at,
         NEW.consumer_id
     )
 FROM

@@ -56,6 +56,7 @@ func In[T any](ctx context.Context, r io.ReadCloser) <-chan *T {
 		defer close(out)
 		for scanner.Scan() {
 			item := scanner.Text()
+
 			lines := strings.Split(item, "\n")
 
 			if len(lines) != 3 {

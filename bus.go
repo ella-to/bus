@@ -262,7 +262,21 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 				return resp, err
 			}
 
-			resp, err = jsonUnmarshal[Resp](evt.Data)
+			replyMsg := struct {
+				Type    string          `json:"type"`
+				Payload json.RawMessage `json:"payload"`
+			}{}
+
+			err = json.Unmarshal(evt.Data, &replyMsg)
+			if err != nil {
+				return resp, err
+			}
+
+			if replyMsg.Type == "error" {
+				return resp, fmt.Errorf(string(replyMsg.Payload))
+			}
+
+			resp, err = jsonUnmarshal[Resp](replyMsg.Payload)
 			if err != nil {
 				return resp, err
 			}
@@ -286,12 +300,21 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 				return
 			}
 
-			resp, err := fn(ctx, req)
-			if err != nil {
-				return
+			var replyMsg struct {
+				Type    string `json:"type"`
+				Payload any    `json:"payload"`
 			}
 
-			replyEvent, err := NewEvent(WithSubject(evt.Reply), WithData(resp), WithExpiresAt(time.Now().Add(30*time.Second)))
+			resp, err := fn(ctx, req)
+			if err != nil {
+				replyMsg.Type = "error"
+				replyMsg.Payload = err.Error()
+			} else {
+				replyMsg.Type = "result"
+				replyMsg.Payload = resp
+			}
+
+			replyEvent, err := NewEvent(WithSubject(evt.Reply), WithData(replyMsg), WithExpiresAt(time.Now().Add(30*time.Second)))
 			if err != nil {
 				return
 			}
