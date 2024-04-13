@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"ella.to/bus.go"
-	"ella.to/bus.go/internal/db"
 	"ella.to/bus.go/internal/sqlite"
 	"ella.to/bus.go/internal/sse"
 	"ella.to/bus.go/internal/track"
+	"ella.to/bus.go/server/db"
 )
 
 type incomingEvent struct {
