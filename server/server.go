@@ -27,6 +27,7 @@ type Server struct {
 	consumersMap   *bus.ConsumersEventMap
 	incomingEvents chan *incomingEvent
 	tick           track.TickFunc
+	closeSignal    chan struct{}
 }
 
 var _ http.Handler = &Server{}
@@ -202,19 +203,25 @@ Outerloop:
 }
 
 func (s *Server) Close() {
-	close(s.incomingEvents)
-	s.incomingEvents = nil
+	close(s.closeSignal)
 }
 
 func (s *Server) notify() func(string, *bus.Event) {
 	go func() {
-		for incomingEvent := range s.incomingEvents {
-			s.consumersMap.Push(incomingEvent.consumerId, incomingEvent.event)
+		for {
+			select {
+			case <-s.closeSignal:
+				return
+			case incomingEvent := <-s.incomingEvents:
+				s.consumersMap.Push(incomingEvent.consumerId, incomingEvent.event)
+			}
 		}
 	}()
 
 	return func(consumerId string, event *bus.Event) {
 		select {
+		case <-s.closeSignal:
+			return
 		case s.incomingEvents <- &incomingEvent{
 			event:      event,
 			consumerId: consumerId,
@@ -223,6 +230,21 @@ func (s *Server) notify() func(string, *bus.Event) {
 			slog.Error("failed to push event to consumers map", "consumer_id", consumerId, "event_id", event.Id)
 		}
 	}
+}
+
+func (s *Server) deleteExpiredEventsLoop(interval time.Duration) {
+	for {
+		select {
+		case <-s.closeSignal:
+			return
+		case <-time.After(interval):
+			err := s.deleteExpiredEvents(context.Background())
+			if err != nil {
+				slog.Error("failed to delete expired events", "error", err)
+			}
+		}
+	}
+
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +263,7 @@ type serverOpt struct {
 	workerSize               int
 	tickTimeout              time.Duration
 	tickSize                 int
+	eventsDeleteInterval     time.Duration
 }
 
 type Opt interface {
@@ -289,6 +312,13 @@ func WithAckTick(timeout time.Duration, size int) Opt {
 	})
 }
 
+func WithEventsDeleteInterval(interval time.Duration) Opt {
+	return optFn(func(s *serverOpt) error {
+		s.eventsDeleteInterval = interval
+		return nil
+	})
+}
+
 func New(ctx context.Context, opts ...Opt) (*Server, error) {
 	conf := &serverOpt{
 		dbPoolSize:               10,
@@ -297,6 +327,7 @@ func New(ctx context.Context, opts ...Opt) (*Server, error) {
 		incomingEventsBufferSize: 100_000,
 		tickTimeout:              5 * time.Second,
 		tickSize:                 100,
+		eventsDeleteInterval:     10 * time.Second,
 	}
 
 	for _, opt := range opts {
@@ -314,6 +345,7 @@ func New(ctx context.Context, opts ...Opt) (*Server, error) {
 		consumersMap:   bus.NewConsumersEventMap(conf.consumerQueueSize),
 		incomingEvents: make(chan *incomingEvent, conf.incomingEventsBufferSize),
 		tick:           track.Create(conf.tickTimeout, conf.tickSize),
+		closeSignal:    make(chan struct{}),
 	}
 
 	dbOpts := []sqlite.OptionFunc{
@@ -336,9 +368,7 @@ func New(ctx context.Context, opts ...Opt) (*Server, error) {
 	s.mux.HandleFunc("POST /", s.publishHandler)
 	s.mux.HandleFunc("GET /", s.consumeHandler)
 
-	if err != nil {
-		return nil, err
-	}
+	go s.deleteExpiredEventsLoop(conf.eventsDeleteInterval)
 
 	return s, nil
 }

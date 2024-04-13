@@ -9,6 +9,13 @@ import (
 	"ella.to/bus.go/internal/sqlite"
 )
 
+func (s *Server) deleteExpiredEvents(ctx context.Context) (err error) {
+	s.dbw.Submit(func(conn *sqlite.Conn) {
+		err = db.DeleteExpiredEvents(ctx, conn)
+	})
+	return
+}
+
 func (s *Server) appendEvents(ctx context.Context, evt *bus.Event) (err error) {
 	s.dbw.Submit(func(conn *sqlite.Conn) {
 		err = db.AppendEvents(ctx, conn, evt)

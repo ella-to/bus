@@ -26,10 +26,16 @@ type Event struct {
 	Reply     string          `json:"reply,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
 	CreatedAt time.Time       `json:"created_at"`
+	ExpiresAt time.Time       `json:"expires_at"`
 }
 
 func NewEvent(opts ...EventOpt) (*Event, error) {
-	evt := &Event{}
+	// magic number for representing 2121-05-30T12:26:00-04:00
+	const ExpiresAt = 4778065560
+
+	evt := &Event{
+		ExpiresAt: time.Unix(ExpiresAt, 0),
+	}
 
 	for _, opt := range opts {
 		err := opt.configureEvent(evt)
@@ -177,6 +183,13 @@ func WithData(data any) EventOpt {
 	})
 }
 
+func WithExpiresAt(ExpiresAt time.Time) EventOpt {
+	return eventOptFn(func(evt *Event) error {
+		evt.ExpiresAt = ExpiresAt
+		return nil
+	})
+}
+
 //
 // Helper types and functions
 //
@@ -234,7 +247,7 @@ type RequestReplyFunc[Req, Resp any] func(context.Context, Req) (Resp, error)
 
 func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req, Resp] {
 	return func(ctx context.Context, req Req) (resp Resp, err error) {
-		evt, err := NewEvent(WithSubject(subject), WithReply(), WithData(req))
+		evt, err := NewEvent(WithSubject(subject), WithReply(), WithData(req), WithExpiresAt(time.Now().Add(30*time.Second)))
 		if err != nil {
 			return resp, err
 		}
@@ -278,7 +291,7 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 				return
 			}
 
-			replyEvent, err := NewEvent(WithSubject(evt.Reply), WithData(resp))
+			replyEvent, err := NewEvent(WithSubject(evt.Reply), WithData(resp), WithExpiresAt(time.Now().Add(30*time.Second)))
 			if err != nil {
 				return
 			}

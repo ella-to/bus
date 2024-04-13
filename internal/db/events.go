@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"ella.to/bus.go"
 	"ella.to/bus.go/internal/sqlite"
@@ -31,6 +32,7 @@ func loadNextEvent(stmt *sqlite.Stmt) (*bus.Event, error) {
 		Reply:     stmt.GetText("reply"),
 		Data:      make(json.RawMessage, size),
 		CreatedAt: sqlite.LoadTime(stmt, "created_at"),
+		ExpiresAt: sqlite.LoadTime(stmt, "expires_at"),
 	}
 
 	n := stmt.GetBytes("data", event.Data)
@@ -74,16 +76,28 @@ func AckEvent(ctx context.Context, conn *sqlite.Conn, consumerId, eventId string
 func AppendEvents(ctx context.Context, conn *sqlite.Conn, events ...*bus.Event) (err error) {
 	defer conn.Save(&err)()
 
+	const numFields = 7
+
 	sql := fmt.Sprintf(`
 		INSERT INTO events 
-			(id, subject, reply, size, data, created_at) 
+			(id, subject, reply, size, data, created_at, expires_at) 
 		VALUES
 		%s;
-	`, sqlite.MultiplePlaceholders(len(events), 6))
+	`, sqlite.MultiplePlaceholders(len(events), numFields))
 
-	args := make([]any, 0, len(events)*6)
+	args := make([]any, 0, len(events)*numFields)
 	for _, event := range events {
-		args = append(args, event.Id, event.Subject, event.Reply, len(event.Data), event.Data, event.CreatedAt)
+		args = append(
+			args,
+
+			event.Id,
+			event.Subject,
+			event.Reply,
+			len(event.Data),
+			event.Data,
+			event.CreatedAt,
+			event.ExpiresAt,
+		)
 	}
 
 	stmt, err := conn.Prepare(ctx, sql, args...)
@@ -113,7 +127,8 @@ func LoadLastEvent(ctx context.Context, conn *sqlite.Conn) (*bus.Event, error) {
 		reply,
 		size, 
 		data, 
-		created_at
+		created_at,
+		expires_at
 	FROM events 
 	ORDER BY id DESC 
 	LIMIT 1
@@ -137,7 +152,8 @@ func LoadLastConsumerEvent(ctx context.Context, conn *sqlite.Conn, consumerId st
 		events.subject AS subject, 
 		events.size AS size, 
 		events.data AS data, 
-		events.created_at AS created_at
+		events.created_at AS created_at,
+		events.expires_at AS expires_at
 	FROM events 
 
 	INNER JOIN consumers_events ON consumers_events.event_id = events.id
@@ -172,7 +188,8 @@ func LoadNotAckedEvent(ctx context.Context, conn *sqlite.Conn, consumerId string
 		events.reply AS reply,
 		events.size AS size,
 		events.data AS data,
-		events.created_at AS created_at
+		events.created_at AS created_at,
+		events.expires_at AS expires_at
 	FROM events 
 	
 	INNER JOIN consumers_events ON consumers_events.event_id = events.id
@@ -197,4 +214,28 @@ func LoadNotAckedEvent(ctx context.Context, conn *sqlite.Conn, consumerId string
 	}
 
 	return event, nil
+}
+
+func DeleteExpiredEventsBeforeDate(ctx context.Context, conn *sqlite.Conn, before time.Time) (err error) {
+	defer conn.Save(&err)()
+
+	const sql = `DELETE FROM events WHERE expires_at < ?;`
+
+	stmt, err := conn.Prepare(ctx, sql, before)
+	if err != nil {
+		return err
+	}
+
+	defer stmt.Finalize()
+
+	_, err = stmt.Step()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func DeleteExpiredEvents(ctx context.Context, conn *sqlite.Conn) (err error) {
+	return DeleteExpiredEventsBeforeDate(ctx, conn, time.Now())
 }
