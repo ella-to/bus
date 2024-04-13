@@ -58,7 +58,7 @@ func (s *Server) publishHandler(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
 
 	header.Set("Event-Id", evt.Id)
-	header.Set("Event-CreatedAt", evt.CreatedAt.Format(time.RFC3339))
+	header.Set("Event-Created-At", evt.CreatedAt.Format(time.RFC3339))
 	w.WriteHeader(http.StatusAccepted)
 }
 

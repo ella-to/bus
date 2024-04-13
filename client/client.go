@@ -90,12 +90,14 @@ func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) i
 		return newIterErr(err)
 	}
 
-	ctx, cancel := context.WithCancel(req.Context())
+	ctx, cancel := context.WithCancel(ctx)
 
 	events := sse.In[bus.Event](ctx, resp.Body)
 
 	return func(yield func(*bus.Event, error) bool) {
-		defer cancel()
+		defer func() {
+			cancel()
+		}()
 
 		for evt := range events {
 			if !yield(evt, nil) {

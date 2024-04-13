@@ -228,3 +228,65 @@ type Stream interface {
 	Publish(ctx context.Context, evt *Event) error
 	Consume(ctx context.Context, consumerOpts ...ConsumerOpt) iter.Seq2[*Event, error]
 }
+
+type RequestReplyFunc[Req, Resp any] func(context.Context, Req) (Resp, error)
+
+func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req, Resp] {
+	return func(ctx context.Context, req Req) (resp Resp, err error) {
+		evt, err := NewEvent(WithSubject(subject), WithReply(), WithData(req))
+		if err != nil {
+			return resp, err
+		}
+
+		err = stream.Publish(ctx, evt)
+		if err != nil {
+			return resp, err
+		}
+
+		for evt, err := range stream.Consume(ctx, WithSubject(evt.Reply), WithFromBeginning()) {
+			if err != nil {
+				return resp, err
+			}
+
+			err = json.Unmarshal(evt.Data, &resp)
+			if err != nil {
+				return resp, err
+			}
+
+			return resp, nil
+		}
+
+		return
+	}
+}
+
+func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn RequestReplyFunc[Req, Resp]) {
+	go func() {
+		for evt, err := range stream.Consume(ctx, WithSubject(subject), WithFromNewest()) {
+			if err != nil {
+				return
+			}
+
+			var req Req
+			err = json.Unmarshal(evt.Data, &req)
+			if err != nil {
+				return
+			}
+
+			resp, err := fn(ctx, req)
+			if err != nil {
+				return
+			}
+
+			replyEvent, err := NewEvent(WithSubject(evt.Reply), WithData(resp))
+			if err != nil {
+				return
+			}
+
+			err = stream.Publish(ctx, replyEvent)
+			if err != nil {
+				return
+			}
+		}
+	}()
+}
