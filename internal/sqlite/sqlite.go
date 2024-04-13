@@ -72,6 +72,8 @@ func (c *Conn) Close() {
 }
 
 func (c *Conn) Prepare(ctx context.Context, sql string, values ...any) (*Stmt, error) {
+	slog.Debug("prepare sql", "sql", ShowSql(sql, values...))
+
 	stmt, err := c.conn.Prepare(strings.TrimSpace(sql))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrPrepareSQL, err)
