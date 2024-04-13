@@ -46,6 +46,7 @@ CREATE TABLE
         consumer_id TEXT,
         event_id TEXT NOT NULL,
         acked INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE,
         FOREIGN KEY (consumer_id) REFERENCES consumers (id) ON DELETE CASCADE
     );
 
