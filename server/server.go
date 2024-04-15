@@ -56,11 +56,21 @@ func (s *Server) publishHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	header := w.Header()
+	if evt.ReplyCount == 0 {
+		header := w.Header()
 
-	header.Set("Event-Id", evt.Id)
-	header.Set("Event-Created-At", evt.CreatedAt.Format(time.RFC3339))
-	w.WriteHeader(http.StatusAccepted)
+		header.Set("Event-Id", evt.Id)
+		header.Set("Event-Created-At", evt.CreatedAt.Format(time.RFC3339))
+
+		w.WriteHeader(http.StatusAccepted)
+	}
+
+	pusher, err := sse.CreatePusher(
+		w,
+		sse.WithHeader("Event-Id", evt.Id),
+		sse.WithHeader("Event-Created-At", evt.CreatedAt.Format(time.RFC3339)),
+	)
+
 }
 
 func (s *Server) consumeHandler(w http.ResponseWriter, r *http.Request) {

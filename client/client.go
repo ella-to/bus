@@ -55,6 +55,24 @@ func (c *Client) Publish(ctx context.Context, evt *bus.Event) error {
 	}
 
 	defer resp.Body.Close()
+	if evt.ReplyCount == 0 {
+		return nil
+	}
+
+	for msg := range sse.Receive(ctx, resp.Body) {
+		if msg.Event == "done" {
+			break
+		}
+
+		if msg.Event == "error" {
+			return fmt.Errorf("%s", msg.Data)
+		}
+
+		evt.ReplyCount--
+		if evt.ReplyCount == 0 {
+			break
+		}
+	}
 
 	return nil
 }
@@ -102,11 +120,19 @@ func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) i
 		for msg := range msgs {
 			var err error
 			var evt *bus.Event
+			var confirmEvent *bus.Event
 
 			switch msg.Event {
 			case "event":
 				evt = &bus.Event{}
 				err = json.Unmarshal(msg.Data, evt)
+				if err == nil && evt.ReplyCount > 0 {
+					confirmEvent, err = bus.NewEvent(bus.WithSubject(evt.Reply), bus.WithData(""))
+					if err == nil {
+						err = c.Publish(ctx, confirmEvent)
+					}
+				}
+
 			case "error":
 				evt = nil
 				err = fmt.Errorf("%s", msg.Data)

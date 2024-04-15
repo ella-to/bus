@@ -22,5 +22,14 @@
       "cwd": ".",
       "env": {}
     },
+    {
+      "name": "single-confirm",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "./examples/single-confirm/main.go",
+      "cwd": ".",
+      "env": {}
+    },
   ]
 }

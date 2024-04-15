@@ -21,12 +21,13 @@ func GetConsumerId() string {
 }
 
 type Event struct {
-	Id        string          `json:"id,omitempty"`
-	Subject   string          `json:"subject"`
-	Reply     string          `json:"reply,omitempty"`
-	Data      json.RawMessage `json:"data,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
-	ExpiresAt time.Time       `json:"expires_at"`
+	Id         string          `json:"id,omitempty"`
+	Subject    string          `json:"subject"`
+	Reply      string          `json:"reply,omitempty"`
+	ReplyCount int             `json:"-"`
+	Data       json.RawMessage `json:"data,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+	ExpiresAt  time.Time       `json:"expires_at"`
 }
 
 func NewEvent(opts ...EventOpt) (*Event, error) {
@@ -168,9 +169,10 @@ func WithReply() EventOpt {
 	})
 }
 
-func WithConfirm() EventOpt {
+func WithConfirm(n int) EventOpt {
 	return eventOptFn(func(evt *Event) error {
 		evt.Reply = fmt.Sprintf("confirm.%s", gen.NewID())
+		evt.ReplyCount = n
 		return nil
 	})
 }
