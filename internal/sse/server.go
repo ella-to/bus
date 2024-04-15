@@ -20,14 +20,6 @@ type pusher struct {
 
 var _ Pusher = (*pusher)(nil)
 
-// NOTE: this is a little optimization to avoid allocations
-var pushContent = [][]byte{
-	[]byte("id: "),
-	[]byte("\nevent: "),
-	[]byte("\ndata: "),
-	[]byte("\n"),
-}
-
 func (p *pusher) Push(ctx context.Context, event string, data any) error {
 	p.id++
 
@@ -40,16 +32,20 @@ func (p *pusher) Push(ctx context.Context, event string, data any) error {
 		event = "error"
 	}
 
-	p.w.Write(pushContent[0])
+	p.w.Write(idPrefix)
 	p.w.Write([]byte(strconv.Itoa(p.id)))
-	p.w.Write(pushContent[1])
+	p.w.Write(singleEnter)
+
+	p.w.Write(eventPrefix)
 	p.w.Write([]byte(event))
-	p.w.Write(pushContent[2])
+	p.w.Write(singleEnter)
+
+	p.w.Write(dataPrefix)
 	err := json.NewEncoder(p.w).Encode(data)
 	if err != nil {
 		return err
 	}
-	p.w.Write(pushContent[3])
+	p.w.Write(singleEnter)
 
 	p.out.Flush()
 
@@ -60,14 +56,14 @@ func (p *pusher) Done(ctx context.Context) error {
 	return p.Push(ctx, "done", struct{}{})
 }
 
-type OutOptions struct {
+type pusherOptions struct {
 	headers map[string]string
 }
 
-type OutOptionFunc func(*OutOptions)
+type OptionFunc func(*pusherOptions)
 
-func OutWithHeader(key, value string) OutOptionFunc {
-	return func(o *OutOptions) {
+func WithHeader(key, value string) OptionFunc {
+	return func(o *pusherOptions) {
 		if o.headers == nil {
 			o.headers = make(map[string]string)
 		}
@@ -75,8 +71,8 @@ func OutWithHeader(key, value string) OutOptionFunc {
 	}
 }
 
-func Out(w http.ResponseWriter, argsFns ...OutOptionFunc) (*pusher, error) {
-	opts := &OutOptions{
+func CreatePusher(w http.ResponseWriter, argsFns ...OptionFunc) (*pusher, error) {
+	opts := &pusherOptions{
 		headers: make(map[string]string),
 	}
 	for _, fn := range argsFns {

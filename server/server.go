@@ -147,7 +147,7 @@ func (s *Server) consumeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pusher, err := sse.Out(w, sse.OutWithHeader("Consumer-Id", id))
+	pusher, err := sse.CreatePusher(w, sse.WithHeader("Consumer-Id", id))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

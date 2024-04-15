@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"ella.to/bus.go"
 	"ella.to/bus.go/client"
@@ -55,8 +54,6 @@ func main() {
 	} else {
 		fmt.Printf("%s = %s\n", req, resp)
 	}
-
-	time.Sleep(1 * time.Second)
 
 	req = &Req{A: 2, B: 0}
 	resp, err = fn(ctx, req)

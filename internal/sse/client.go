@@ -4,16 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"strconv"
-	"strings"
 )
 
-var splitData = []byte("\n\n")
-
-func In[T any](ctx context.Context, r io.ReadCloser) <-chan *T {
-	out := make(chan *T, 1)
+func Receive(ctx context.Context, r io.ReadCloser) <-chan *Payload {
+	out := make(chan *Payload, 1)
 
 	scanner := bufio.NewScanner(r)
 
@@ -24,7 +20,7 @@ func In[T any](ctx context.Context, r io.ReadCloser) <-chan *T {
 			return 0, nil, nil
 		}
 
-		idx := bytes.Index(data, splitData)
+		idx := bytes.Index(data, doubleEnters)
 		if idx >= 0 {
 			return idx + 2, data[:idx], nil
 		}
@@ -37,11 +33,11 @@ func In[T any](ctx context.Context, r io.ReadCloser) <-chan *T {
 		return 0, nil, nil
 	})
 
-	secondPart := func(prefix, value string) (string, bool) {
-		if !strings.HasPrefix(value, prefix) {
-			return "", false
+	secondPart := func(prefix, value []byte) ([]byte, bool) {
+		if !bytes.HasPrefix(value, prefix) {
+			return nil, false
 		}
-		return strings.TrimSpace(value[len(prefix):]), true
+		return bytes.TrimSpace(value[len(prefix):]), true
 	}
 
 	// Close the reader when the context is cancelled
@@ -55,44 +51,43 @@ func In[T any](ctx context.Context, r io.ReadCloser) <-chan *T {
 	go func() {
 		defer close(out)
 		for scanner.Scan() {
-			item := scanner.Text()
+			item := scanner.Bytes()
 
-			lines := strings.Split(item, "\n")
+			lines := bytes.Split(item, singleEnter)
 
 			if len(lines) != 3 {
 				continue
 			}
 
-			identifier, ok := secondPart("id:", lines[0])
+			identifier, ok := secondPart(idPrefix, lines[0])
 			if !ok {
 				continue
 			}
 
 			// ignore id for now
-			_, err := strconv.ParseInt(identifier, 10, 64)
+			id, err := strconv.ParseInt(string(identifier), 10, 64)
 			if err != nil {
 				continue
 			}
 
 			// ignore event for now
-			_, ok = secondPart("event:", lines[1])
+			event, ok := secondPart(eventPrefix, lines[1])
 			if !ok {
 				continue
 			}
 
-			data, ok := secondPart("data:", lines[2])
+			data, ok := secondPart(dataPrefix, lines[2])
 			if !ok {
 				continue
 			}
 
-			var msg T
-
-			err = json.Unmarshal([]byte(data), &msg)
-			if err != nil {
-				continue
+			msg := &Payload{
+				Id:    id,
+				Event: string(event),
+				Data:  data,
 			}
 
-			out <- &msg
+			out <- msg
 		}
 	}()
 

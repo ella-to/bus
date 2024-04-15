@@ -92,15 +92,29 @@ func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) i
 
 	ctx, cancel := context.WithCancel(ctx)
 
-	events := sse.In[bus.Event](ctx, resp.Body)
+	msgs := sse.Receive(ctx, resp.Body)
 
 	return func(yield func(*bus.Event, error) bool) {
 		defer func() {
 			cancel()
 		}()
 
-		for evt := range events {
-			if !yield(evt, nil) {
+		for msg := range msgs {
+			var err error
+			var evt *bus.Event
+
+			switch msg.Event {
+			case "event":
+				evt = &bus.Event{}
+				err = json.Unmarshal(msg.Data, evt)
+			case "error":
+				evt = nil
+				err = fmt.Errorf("%s", msg.Data)
+			case "done":
+				return
+			}
+
+			if !yield(evt, err) {
 				break
 			}
 		}
