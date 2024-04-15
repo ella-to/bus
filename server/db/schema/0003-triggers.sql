@@ -129,6 +129,7 @@ SELECT
         id,
         subject,
         reply,
+        reply_count,
         size,
         data,
         created_at,

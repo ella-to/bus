@@ -54,18 +54,14 @@ func (c *Client) Publish(ctx context.Context, evt *bus.Event) error {
 		return err
 	}
 
-	defer resp.Body.Close()
+	resp.Body.Close()
 	if evt.ReplyCount == 0 {
 		return nil
 	}
 
-	for msg := range sse.Receive(ctx, resp.Body) {
-		if msg.Event == "done" {
-			break
-		}
-
-		if msg.Event == "error" {
-			return fmt.Errorf("%s", msg.Data)
+	for _, err := range c.Consume(ctx, bus.WithSubject(evt.Reply), bus.WithFromBeginning()) {
+		if err != nil {
+			return err
 		}
 
 		evt.ReplyCount--

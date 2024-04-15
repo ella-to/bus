@@ -24,7 +24,7 @@ type Event struct {
 	Id         string          `json:"id,omitempty"`
 	Subject    string          `json:"subject"`
 	Reply      string          `json:"reply,omitempty"`
-	ReplyCount int             `json:"-"`
+	ReplyCount int64           `json:"reply_count,omitempty"`
 	Data       json.RawMessage `json:"data,omitempty"`
 	CreatedAt  time.Time       `json:"created_at"`
 	ExpiresAt  time.Time       `json:"expires_at"`
@@ -169,7 +169,7 @@ func WithReply() EventOpt {
 	})
 }
 
-func WithConfirm(n int) EventOpt {
+func WithConfirm(n int64) EventOpt {
 	return eventOptFn(func(evt *Event) error {
 		evt.Reply = fmt.Sprintf("confirm.%s", gen.NewID())
 		evt.ReplyCount = n

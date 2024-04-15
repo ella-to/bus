@@ -3,6 +3,7 @@ CREATE TABLE
         id TEXT NOT NULL,
         subject TEXT NOT NULL,
         reply TEXT,
+        reply_count INTEGER NOT NULL DEFAULT 0,
         size INTEGER NOT NULL,
         data BLOB,
         created_at INTEGER NOT NULL,
