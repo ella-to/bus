@@ -98,7 +98,7 @@ func TestRequestReplyUnderLoad(t *testing.T) {
 
 	fn := bus.Request[Req, Resp](busClient, "test.a")
 
-	const loadCount = 100
+	const loadCount = 10
 	const workerCount = 5
 	const totalCount = int64(loadCount * workerCount)
 

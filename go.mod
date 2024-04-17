@@ -3,9 +3,10 @@ module ella.to/bus
 go 1.22.0
 
 require (
+	ella.to/sqlite v0.0.1
+	ella.to/sse v0.0.1
 	github.com/rs/xid v1.5.0
 	github.com/stretchr/testify v1.9.0
-	zombiezen.com/go/sqlite v1.2.0
 )
 
 require (
@@ -22,4 +23,5 @@ require (
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.7.2 // indirect
 	modernc.org/sqlite v1.29.1 // indirect
+	zombiezen.com/go/sqlite v1.2.0 // indirect
 )

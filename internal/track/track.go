@@ -20,8 +20,6 @@ func Create(d time.Duration, n int) TickFunc {
 	return func(key string, fn func()) {
 		mu.Lock()
 		t, ok := tracks[key]
-		mu.Unlock()
-
 		if !ok {
 			t = &track{
 				count: n,
@@ -32,10 +30,9 @@ func Create(d time.Duration, n int) TickFunc {
 				mu.Unlock()
 				t.fn()
 			})
-			mu.Lock()
-			tracks[key] = t
-			mu.Unlock()
+			tracks[key] = t // No need to lock/unlock here
 		}
+		mu.Unlock()
 		t.fn = fn
 		t.count--
 

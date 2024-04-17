@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -267,6 +268,32 @@ type serverOpt struct {
 	eventsDeleteInterval     time.Duration
 }
 
+func (s *serverOpt) String() string {
+	dbPath := s.dbPath
+	if dbPath == "" {
+		dbPath = "memory"
+	}
+
+	return fmt.Sprintf(`
+Configuration:
+	Pool Size: %d
+	DB Path: %s
+	Consumer Queue Size: %d
+	Incoming Events Buffer Size: %d
+	Tick Timeout: %s
+	Tick Size: %d
+	Events Delete Interval: %s
+	`,
+		s.dbPoolSize,
+		dbPath,
+		s.consumerQueueSize,
+		s.incomingEventsBufferSize,
+		s.tickTimeout,
+		s.tickSize,
+		s.eventsDeleteInterval,
+	)
+}
+
 type Opt interface {
 	configureServer(*serverOpt) error
 }
@@ -337,6 +364,8 @@ func New(ctx context.Context, opts ...Opt) (*Server, error) {
 			return nil, err
 		}
 	}
+
+	fmt.Println(conf.String())
 
 	// NOTE: worker size is the same as db pool size
 	// to prevent deadlock
