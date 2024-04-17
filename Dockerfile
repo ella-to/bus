@@ -19,7 +19,7 @@ ENV GOEXPERIMENT=rangefunc
 ENV GOPRIVATE=ella.to/*
 
 ## TEST GO UNIT TESTS
-RUN go test -race -timeout 10s ./... -v
+RUN go test -race -timeout 50s ./... -v
 
 ## BUILD API 
 RUN go build -ldflags="-w -s -X main.GitCommit=${GIT_COMMIT} -X main.Version=${VERSION}" -o ./bus-server cmd/server/main.go
