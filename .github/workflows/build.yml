@@ -8,30 +8,34 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Extract Tag version
-        id: tag_version
-        run: echo ::set-output name=VERSION::${GITHUB_REF#refs/tags/}
-
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Extract tag version
+        id: tag_version
+        run: echo ::set-output name=VALUE::${GITHUB_REF#refs/tags/}
+
+      - name: Extract git commit hash
+        id: git_commit
+        run: echo ::set-output name=VALUE::$(git rev-list -1 HEAD)
 
       - name: Prepare the credentials
         run: |
           echo "ELLA_ACCESS_TOKEN=${{ secrets.ELLA_ACCESS_TOKEN }}" > .github/credentials/.env
 
       - name: build
+        env:
+          VERSION: ${{ steps.tag_version.outputs.VALUE }}
+          GIT_COMMIT: ${{ steps.git_commit.outputs.VALUE }}
         run: |
-          GIT_COMMIT=$(git rev-list -1 HEAD)
-          VERSION=${{ steps.tag_version.outputs.VERSION }}
-
           docker build \
-            --build-arg GIT_COMMIT=$GIT_COMMIT \
-            --build-arg VERSION=$VERSION \
+            --build-arg GIT_COMMIT=${{ env.GIT_COMMIT }} \
+            --build-arg VERSION=${{ env.VERSION }} \
             --no-cache \
             --progress=plain \
             --secret id=_env,src=.github/credentials/.env \
-            -t ellato/bus:$VERSION -t ellato/bus:latest .
+            -t ellato/bus:${{ env.VERSION }} -t ellato/bus:latest .
 
           echo ${{ secrets.ELLA_DOCKER_TOKEN }} | docker login -u ellato --password-stdin
-          docker push ellato/bus:$VERSION
+          docker push ellato/bus:${{ env.VERSION }}
           docker push ellato/bus:latest
