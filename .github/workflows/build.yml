@@ -13,11 +13,11 @@ jobs:
 
       - name: Extract tag version
         id: tag_version
-        run: echo ::set-output name=VALUE::${GITHUB_REF#refs/tags/}
+        run: echo "VALUE=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Extract git commit hash
         id: git_commit
-        run: echo ::set-output name=VALUE::$(git rev-list -1 HEAD)
+        run: echo "VALUE=$(git rev-list -1 HEAD)" >> $GITHUB_OUTPUT
 
       - name: Prepare the credentials
         run: |
