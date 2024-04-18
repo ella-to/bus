@@ -2,10 +2,12 @@ package bus_test
 
 import (
 	"context"
+	"log/slog"
 	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -15,8 +17,11 @@ import (
 )
 
 func runBusServer(t testing.TB, ctx context.Context) *client.Client {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
 	busServer, err := server.New(
 		ctx,
+		server.WithIncomingEventsBufferSize(1000),
 		// server.WithDBPath("./test.db"),
 	)
 	assert.NoError(t, err)
@@ -35,7 +40,8 @@ func runBusServer(t testing.TB, ctx context.Context) *client.Client {
 func TestRequestReply(t *testing.T) {
 	ctx := context.Background()
 
-	busClient := runBusServer(t, ctx)
+	busClient, err := client.New()
+	assert.NoError(t, err)
 
 	type Req struct {
 	}
@@ -75,7 +81,8 @@ func TestRequestReply(t *testing.T) {
 func TestRequestReplyUnderLoad(t *testing.T) {
 	ctx := context.Background()
 
-	busClient := runBusServer(t, ctx)
+	busClient, err := client.New()
+	assert.NoError(t, err)
 
 	type Req struct {
 	}
@@ -95,6 +102,8 @@ func TestRequestReplyUnderLoad(t *testing.T) {
 		atomic.AddInt64(&count2, 1)
 		return Resp{}, nil
 	})
+
+	time.Sleep(1 * time.Second)
 
 	fn := bus.Request[Req, Resp](busClient, "test.a")
 

@@ -217,6 +217,7 @@ func (s *Server) notify() func(string, *bus.Event) {
 		for {
 			select {
 			case <-s.closeSignal:
+				slog.Debug("closing notify loop")
 				return
 			case incomingEvent := <-s.incomingEvents:
 				s.consumersMap.Push(incomingEvent.consumerId, incomingEvent.event)
@@ -227,6 +228,7 @@ func (s *Server) notify() func(string, *bus.Event) {
 	return func(consumerId string, event *bus.Event) {
 		select {
 		case <-s.closeSignal:
+			slog.Debug("not pushing event to consumers map becuase of close signal", "consumer_id", consumerId, "event_id", event.Id)
 			return
 		case s.incomingEvents <- &incomingEvent{
 			event:      event,
@@ -242,6 +244,7 @@ func (s *Server) deleteExpiredEventsLoop(interval time.Duration) {
 	for {
 		select {
 		case <-s.closeSignal:
+			slog.Debug("closing delete expired events loop")
 			return
 		case <-time.After(interval):
 			err := s.deleteExpiredEvents(context.Background())
@@ -280,13 +283,13 @@ func (s *serverOpt) String() string {
 
 	return fmt.Sprintf(`
 Configuration:
-	Pool Size: %d
-	DB Path: %s
-	Consumer Queue Size: %d
-	Incoming Events Buffer Size: %d
-	Tick Timeout: %s
-	Tick Size: %d
-	Events Delete Interval: %s
+ - Pool Size: %d
+ - DB Path: %s
+ - Consumer Queue Size: %d
+ - Incoming Events Buffer Size: %d
+ - Tick Timeout: %s
+ - Tick Size: %d
+ - Events Delete Interval: %s
 	`,
 		s.dbPoolSize,
 		dbPath,

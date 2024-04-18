@@ -26,11 +26,11 @@ func (s *Server) appendEvents(ctx context.Context, evt *bus.Event) (err error) {
 func (s *Server) ackEvent(ctx context.Context, consumerId string, eventId string) (err error) {
 	// NOTE: this is a ticked operation to speed up the process
 	// of acking events, tick can be configured by setting server.WithAckTick
-	s.tick(consumerId, func() {
-		s.dbw.Submit(func(conn *sqlite.Conn) {
-			err = db.AckEvent(ctx, conn, consumerId, eventId)
-		})
+	// s.tick(consumerId, func() {
+	s.dbw.Submit(func(conn *sqlite.Conn) {
+		err = db.AckEvent(ctx, conn, consumerId, eventId)
 	})
+	// })
 	return
 }
 

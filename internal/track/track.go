@@ -3,6 +3,7 @@ package track
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -49,6 +50,12 @@ func Create(ctx context.Context, d time.Duration, n int) TickFunc {
 		for {
 			select {
 			case <-ctx.Done():
+				slog.Debug("close track goroutine")
+				for _, t := range tracks {
+					if t.timer != nil {
+						t.timer.Stop()
+					}
+				}
 				return
 			case t := <-ch:
 				switch t.cmd {
