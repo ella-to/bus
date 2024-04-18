@@ -54,7 +54,7 @@ func (fn NotifyFunc) Step(ctx sqlite.Context, args []sqlite.Value) error {
 		ReplyCount: replyCount,
 		Data:       data,
 		CreatedAt:  createdAt,
-		ExpiresAt:  expiresAt,
+		ExpiresAt:  &expiresAt,
 	})
 
 	return nil

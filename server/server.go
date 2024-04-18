@@ -48,6 +48,10 @@ func (s *Server) publishHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if evt.ExpiresAt == nil {
+		evt.ExpiresAt = bus.GetDefaultExpiresAt()
+	}
+
 	evt.Id = bus.GetEventId()
 	evt.CreatedAt = time.Now()
 

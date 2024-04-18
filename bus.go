@@ -12,6 +12,14 @@ import (
 	"ella.to/bus/internal/gen"
 )
 
+// magic number for representing 2121-05-30T12:26:00-04:00
+const ExpiresAtUnix = 4778065560
+
+func GetDefaultExpiresAt() *time.Time {
+	expiresAt := time.Unix(ExpiresAtUnix, 0)
+	return &expiresAt
+}
+
 func GetEventId() string {
 	return fmt.Sprint("e_", gen.NewID())
 }
@@ -27,15 +35,12 @@ type Event struct {
 	ReplyCount int64           `json:"reply_count,omitempty"`
 	Data       json.RawMessage `json:"data,omitempty"`
 	CreatedAt  time.Time       `json:"created_at"`
-	ExpiresAt  time.Time       `json:"expires_at"`
+	ExpiresAt  *time.Time      `json:"expires_at"`
 }
 
 func NewEvent(opts ...EventOpt) (*Event, error) {
-	// magic number for representing 2121-05-30T12:26:00-04:00
-	const ExpiresAt = 4778065560
-
 	evt := &Event{
-		ExpiresAt: time.Unix(ExpiresAt, 0),
+		ExpiresAt: GetDefaultExpiresAt(),
 	}
 
 	for _, opt := range opts {
@@ -187,7 +192,7 @@ func WithData(data any) EventOpt {
 
 func WithExpiresAt(ExpiresAt time.Time) EventOpt {
 	return eventOptFn(func(evt *Event) error {
-		evt.ExpiresAt = ExpiresAt
+		evt.ExpiresAt = &ExpiresAt
 		return nil
 	})
 }

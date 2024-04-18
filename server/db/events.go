@@ -26,6 +26,8 @@ func loadNextEvent(stmt *sqlite.Stmt) (*bus.Event, error) {
 
 	size := int(stmt.GetInt64("size"))
 
+	expiresAt := sqlite.LoadTime(stmt, "expires_at")
+
 	event := &bus.Event{
 		Id:         stmt.GetText("id"),
 		Subject:    stmt.GetText("subject"),
@@ -33,7 +35,7 @@ func loadNextEvent(stmt *sqlite.Stmt) (*bus.Event, error) {
 		ReplyCount: stmt.GetInt64("reply_count"),
 		Data:       make(json.RawMessage, size),
 		CreatedAt:  sqlite.LoadTime(stmt, "created_at"),
-		ExpiresAt:  sqlite.LoadTime(stmt, "expires_at"),
+		ExpiresAt:  &expiresAt,
 	}
 
 	n := stmt.GetBytes("data", event.Data)
@@ -98,7 +100,7 @@ func AppendEvents(ctx context.Context, conn *sqlite.Conn, events ...*bus.Event) 
 			len(event.Data),
 			event.Data,
 			event.CreatedAt,
-			event.ExpiresAt,
+			*event.ExpiresAt,
 		)
 	}
 
