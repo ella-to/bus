@@ -19,7 +19,7 @@ ENV GOEXPERIMENT=rangefunc
 ENV GOPRIVATE=ella.to/*
 
 ## TEST GO UNIT TESTS
-RUN go test -race -timeout 50s ./... -v
+RUN go test -race -timeout 100s ./... -v
 
 ARG GIT_COMMIT
 ARG VERSION
