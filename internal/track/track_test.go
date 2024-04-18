@@ -34,7 +34,7 @@ func TestTrack(t *testing.T) {
 	start := time.Now()
 	fn(key, func() {
 		defer wg.Done()
-		fmt.Println("key Called on", time.Now().Sub(start).Seconds())
+		fmt.Println("key Called on", time.Since(start).Seconds())
 	})
 
 	wg.Wait()
@@ -83,14 +83,14 @@ func TestTrackUnderLoad(t *testing.T) {
 	wg.Add(workerCount)
 
 	for i := 0; i < workerCount; i++ {
-		go func() {
+		go func(i int) {
 			defer wg.Done()
 			for j := 0; j < workerCalls; j++ {
 				fn("key", func() {
 					fmt.Printf("@@@@@key from %d Called on %d\n", i, j)
 				})
 			}
-		}()
+		}(i)
 	}
 
 	wg.Wait()
