@@ -374,7 +374,7 @@ func New(ctx context.Context, opts ...Opt) (*Server, error) {
 	s := &Server{
 		consumersMap:   bus.NewConsumersEventMap(conf.consumerQueueSize),
 		incomingEvents: make(chan *incomingEvent, conf.incomingEventsBufferSize),
-		tick:           track.Create(conf.tickTimeout, conf.tickSize),
+		tick:           track.Create(ctx, conf.tickTimeout, conf.tickSize),
 		closeSignal:    make(chan struct{}),
 	}
 
