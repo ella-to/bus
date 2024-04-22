@@ -110,23 +110,47 @@ CREATE TRIGGER IF NOT EXISTS trigger_consumers_events_acked
 --
 AFTER
 UPDATE OF acked ON consumers_events WHEN NEW.acked = 1
-AND NEW.event_id = (
+AND NEW.event_id > (
     -- Get the last event_id of the consumer that has been acked
     -- since the update can be executed in batch
     SELECT
-        event_id
+        COALESCE(last_event_id, '') AS last_event_id
     FROM
-        consumers_events
+        consumers
     WHERE
-        consumer_id = NEW.consumer_id
-        AND acked = 1
-    ORDER BY
-        event_id DESC
-    LIMIT
-        1
+        id = NEW.consumer_id
 )
 --
 BEGIN
+--
+UPDATE consumers
+SET
+    last_event_id = NEW.event_id,
+    acked_counts = acked_counts + 1
+WHERE
+    id = NEW.consumer_id;
+
+-- Because consumers_events is getting bigger and bigger
+-- we need to delete the old events that has been acked
+-- and keep the latest one, 
+-- However, calling delete will cause the trigger to be called again
+-- So at the beginning of the trigger, we need to check if the new event
+-- is bigger than the last_event_id of the consumer, if not, it means that tigger
+-- should not be called
+DELETE FROM consumers_events
+WHERE
+    consumer_id = NEW.consumer_id
+    AND acked = 1
+    AND rowid NOT IN (
+        SELECT
+            MAX(rowid)
+        FROM
+            consumers_events
+        WHERE
+            consumer_id = NEW.consumer_id
+            AND acked = 1
+    );
+
 --
 INSERT INTO
     consumers_events (consumer_id, event_id)
