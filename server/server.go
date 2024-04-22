@@ -119,6 +119,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	isDurable := qs.Has("durable")
 	queue := qs.Get("queue")
 	isQueue := queue != ""
+	isAutoAck := qs.Has("auto_ack")
 
 	if isDurable && isQueue {
 		http.Error(w, "durable and queue are mutually exclusive", http.StatusBadRequest)
@@ -244,12 +245,16 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 
 			prevEventId = event.Id
 			if msgsCount%batchSize == 0 {
-				h.AckEvent(ctx, consumer.Id, prevEventId)
+				if isAutoAck {
+					h.AckEvent(ctx, consumer.Id, prevEventId)
+				}
 				prevEventId = ""
 			}
 		case <-time.After(1 * time.Second):
 			if prevEventId != "" {
-				h.AckEvent(ctx, consumer.Id, prevEventId)
+				if isAutoAck {
+					h.AckEvent(ctx, consumer.Id, prevEventId)
+				}
 				prevEventId = ""
 			}
 		}
@@ -345,7 +350,7 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 	h.dbw = sqlite.NewWorker(db, 100, int64(conf.dbPoolSize))
 
 	h.mux.HandleFunc("POST /", h.publishHandler)          // POST /
-	h.mux.HandleFunc("GET /", h.consumerHandler)          // GET /?subject=foo&durable&queue=bar&pos=all
+	h.mux.HandleFunc("GET /", h.consumerHandler)          // GET /?subject=foo&durable&queue=bar&pos=oldest|newest|<event_id>&id=123&auto_ack
 	h.mux.HandleFunc("HEAD /", h.ackedHandler)            // HEAD /?consumer_id=123&event_id=456
 	h.mux.HandleFunc("DELETE /", h.deleteConsumerHandler) // DELETE /?consumer_id=123
 
