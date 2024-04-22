@@ -33,7 +33,8 @@ func LoadNotAckedEvents(ctx context.Context, conn *sqlite.Conn, consumerId strin
 		WHERE 
 			consumers_events.consumer_id = ? 
 			AND consumers_events.acked = 0
-		ORDER BY events.id ASC;`, consumerId)
+		ORDER BY events.id ASC
+		LIMIT 1;`, consumerId)
 	if err != nil {
 		return nil, err
 	}

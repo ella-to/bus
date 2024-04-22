@@ -120,6 +120,15 @@ AND NEW.event_id > (
     WHERE
         id = NEW.consumer_id
 )
+AND NOT EXISTS (
+    SELECT
+        1
+    FROM
+        consumers
+    WHERE
+        id = NEW.consumer_id
+        AND queue_name IS NOT NULL
+)
 --
 BEGIN
 --

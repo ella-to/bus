@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -160,6 +161,16 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	events := h.consumersEventMap.Add(id, batchSize)
 	defer h.consumersEventMap.Remove(id)
 
+	// need to call this here before creating the consumer
+	// because once the consumer is created, triggers will start
+	// pumping events to the consumer and it might leads to
+	// pipe is full error
+	notAckedEvents, err := h.LoadNotAckedEvents(ctx, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	consumer, err := h.LoadConsumerById(ctx, id)
 	if errors.Is(err, storage.ErrConsumerNotFound) {
 		opts := []bus.ConsumerOpt{
@@ -210,6 +221,10 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		// NOTE: id of consumer will be sent back to the client using `Consumer-Id` http.Header key
 		// this is useful for the client to reconnect to the same consumer if id is auto-generated
 		sse.WithHeader("Consumer-Id", id),
+		sse.WithHeader("Consumer-Subject-Pattern", consumer.Pattern),
+		sse.WithHeader("Consumer-Queue", consumer.QueueName),
+		sse.WithHeader("Consumer-Durable", fmt.Sprintf("%t", consumer.Durable)),
+		sse.WithHeader("Consumer-Auto-Ack", fmt.Sprintf("%t", isAutoAck)),
 	)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -220,16 +235,13 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	var msgsCount int64
 	var prevEventId string
 
-	// load any pending events
-	notAckedEvents, err := h.LoadNotAckedEvents(ctx, consumer.Id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	// push any pending events
 	for _, event := range notAckedEvents {
-		h.consumersEventMap.Push(consumer.Id, event)
+		err = h.consumersEventMap.Push(consumer.Id, event)
+		if err != nil {
+			pusher.Push(ctx, "error", err)
+			return
+		}
 	}
 
 	for {
@@ -246,14 +258,22 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 			prevEventId = event.Id
 			if msgsCount%batchSize == 0 {
 				if isAutoAck {
-					h.AckEvent(ctx, consumer.Id, prevEventId)
+					err = h.AckEvent(ctx, consumer.Id, prevEventId)
+					if err != nil {
+						pusher.Push(ctx, "error", err)
+						return
+					}
 				}
 				prevEventId = ""
 			}
 		case <-time.After(1 * time.Second):
 			if prevEventId != "" {
 				if isAutoAck {
-					h.AckEvent(ctx, consumer.Id, prevEventId)
+					err = h.AckEvent(ctx, consumer.Id, prevEventId)
+					if err != nil {
+						pusher.Push(ctx, "error", err)
+						return
+					}
 				}
 				prevEventId = ""
 			}
