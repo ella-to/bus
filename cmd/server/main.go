@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,6 +12,9 @@ import (
 
 	"ella.to/bus/server"
 )
+
+var Version = "master"
+var GitCommit = "development"
 
 func getLogLevel() slog.Level {
 	value := os.Getenv("BUS_LOG_LEVEL")
@@ -115,6 +119,11 @@ func main() {
 		Addr:    addr,
 	}
 	defer server.Close()
+
+	fmt.Printf(`
+	Version: %s
+	GitCommit: %s
+		`, Version, GitCommit)
 
 	slog.Info("starting server", "addr", addr)
 
