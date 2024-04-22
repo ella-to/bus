@@ -1,0 +1,34 @@
+version: "3.5"
+
+services:
+  bus:
+    image: ellato/bus:latest
+
+    environment:
+      - BUS_LOG_LEVEL=INFO
+      - BUS_SERVER_ADDR=0.0.0.0:2021
+      - BUS_STORAGE_POOL_SIZE=10
+      # if you want to use in memory
+      # dont set BUS_STORAGE_PATH
+      - BUS_STORAGE_PATH=/storage/bus.db
+      - BUS_BATCH_WINDOW_SIZE=100
+      - BUS_BATCH_WINDOW_DURATION=5s
+      - BUS_WORKER_BUFFER_SIZE=1000
+
+    # if ports is removed, then the bus service can
+    # only be accessed from within the network bus
+    # make sure to add the bus network to the other services
+    ports:
+      - "2021:2021"
+
+    # make sure to use the right network
+    networks:
+      - bus
+
+    volumes:
+      - ./storage:/storage
+
+networks:
+  bus:
+    name: bus_net
+    driver: bridge

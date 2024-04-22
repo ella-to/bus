@@ -20,8 +20,11 @@ import (
 // OPTIONS
 
 type config struct {
-	dbOpts     []sqlite.OptionFunc
-	dbPoolSize int
+	dbOpts              []sqlite.OptionFunc
+	dbPoolSize          int
+	batchWindowSize     int
+	batchWindowDuration time.Duration
+	workerBufferSize    int64
 }
 
 type Opt interface {
@@ -51,9 +54,23 @@ func WithStoragePath(path string) Opt {
 	})
 }
 
-func WithStorageMemory() Opt {
+func WithBatchWindowSize(size int) Opt {
 	return optFn(func(s *config) error {
-		s.dbOpts = append(s.dbOpts, sqlite.WithMemory())
+		s.batchWindowSize = size
+		return nil
+	})
+}
+
+func WithBatchWindowDuration(d time.Duration) Opt {
+	return optFn(func(s *config) error {
+		s.batchWindowDuration = d
+		return nil
+	})
+}
+
+func WithWorkerBufferSize(size int64) Opt {
+	return optFn(func(s *config) error {
+		s.workerBufferSize = size
 		return nil
 	})
 }
@@ -381,7 +398,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func New(ctx context.Context, opts ...Opt) (*Handler, error) {
-	conf := &config{}
+	conf := &config{
+		dbOpts: []sqlite.OptionFunc{
+			sqlite.WithMemory(),
+		},
+		batchWindowSize:     20,
+		batchWindowDuration: 500 * time.Millisecond,
+		workerBufferSize:    1000,
+	}
 	for _, opt := range opts {
 		err := opt.configureHandler(conf)
 		if err != nil {
@@ -393,7 +417,7 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 		consumersEventMap: bus.NewConsumersEventMap(conf.dbPoolSize, 2*time.Second),
 	}
 
-	h.batch = batch.NewSort(20, 500*time.Millisecond, func(events []*bus.Event) {
+	h.batch = batch.NewSort(conf.batchWindowSize, conf.batchWindowDuration, func(events []*bus.Event) {
 		h.dbw.Submit(func(conn *sqlite.Conn) {
 			ctx := context.Background()
 			err := storage.AppendEvents(ctx, conn, events...)
@@ -408,7 +432,7 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 		return nil, err
 	}
 
-	h.dbw = sqlite.NewWorker(db, 1000, int64(conf.dbPoolSize))
+	h.dbw = sqlite.NewWorker(db, int64(conf.workerBufferSize), int64(conf.dbPoolSize))
 
 	h.mux.HandleFunc("POST /", h.publishHandler)          // POST /
 	h.mux.HandleFunc("GET /", h.consumerHandler)          // GET /?subject=foo&durable&queue=bar&pos=oldest|newest|<event_id>&id=123&auto_ack

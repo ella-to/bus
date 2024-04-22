@@ -5,28 +5,105 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"ella.to/bus/server"
 )
 
+func getLogLevel() slog.Level {
+	value := os.Getenv("BUS_LOG_LEVEL")
+	if value == "" {
+		return slog.LevelInfo
+	}
+
+	switch strings.ToLower(value) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+func getServerAddr() string {
+	value := os.Getenv("BUS_SERVER_ADDR")
+	if value == "" {
+		return "0.0.0.0:2021"
+	}
+
+	return value
+}
+
+func getStoragePoolSize(serverOpts []server.Opt) []server.Opt {
+	value, err := strconv.ParseInt(os.Getenv("BUS_STORAGE_POOL_SIZE"), 10, 64)
+	if err != nil {
+		return serverOpts
+	}
+
+	return append(serverOpts, server.WithStoragePoolSize(int(value)))
+}
+
+func getStoragePath(serverOpts []server.Opt) []server.Opt {
+	value := os.Getenv("BUS_STORAGE_PATH")
+	if value == "" {
+		return serverOpts
+	}
+
+	return append(serverOpts, server.WithStoragePath(value))
+}
+
+func getBatchWindowSize(serverOpts []server.Opt) []server.Opt {
+	value, err := strconv.ParseInt(os.Getenv("BUS_BATCH_WINDOW_SIZE"), 10, 64)
+	if err != nil {
+		return serverOpts
+	}
+
+	return append(serverOpts, server.WithBatchWindowSize(int(value)))
+}
+
+func getBatchWindowDuration(serverOpts []server.Opt) []server.Opt {
+	value, err := time.ParseDuration(os.Getenv("BUS_BATCH_WINDOW_DURATION"))
+	if err != nil {
+		return serverOpts
+	}
+
+	return append(serverOpts, server.WithBatchWindowDuration(value))
+}
+
+func getWorkerBufferSize(serverOpts []server.Opt) []server.Opt {
+	value, err := strconv.ParseInt(os.Getenv("BUS_WORKER_BUFFER_SIZE"), 10, 64)
+	if err != nil {
+		return serverOpts
+	}
+
+	return append(serverOpts, server.WithWorkerBufferSize(value))
+}
+
 func main() {
 	ctx := context.TODO()
 
-	const testDbPath = "./bus.db"
+	slog.SetLogLoggerLevel(getLogLevel())
 
-	os.Remove(testDbPath)
-	os.Remove(testDbPath + "-shm")
-	os.Remove(testDbPath + "-wal")
+	addr := getServerAddr()
 
-	slog.SetLogLoggerLevel(slog.LevelInfo)
+	serverOpts := []server.Opt{}
 
-	addr := "0.0.0.0:2021"
+	serverOpts = getStoragePoolSize(serverOpts)
+	serverOpts = getStoragePath(serverOpts)
+	serverOpts = getBatchWindowSize(serverOpts)
+	serverOpts = getBatchWindowDuration(serverOpts)
+	serverOpts = getWorkerBufferSize(serverOpts)
 
 	handler, err := server.New(
 		ctx,
-		// server.WithStorageMemory(),
-		server.WithStoragePath("./bus.db"),
-		server.WithStoragePoolSize(10),
+		serverOpts...,
 	)
 	if err != nil {
 		slog.Error(err.Error())
