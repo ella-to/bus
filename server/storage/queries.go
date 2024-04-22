@@ -16,6 +16,45 @@ var (
 	ErrConsumerNotFound = errors.New("consumer not found")
 )
 
+func LoadNotAckedEvents(ctx context.Context, conn *sqlite.Conn, consumerId string) (events []*bus.Event, err error) {
+	stmt, err := conn.Prepare(ctx, `
+		SELECT 
+			events.id AS id, 
+			events.subject AS subject, 
+			events.reply AS reply,
+			events.reply_count AS reply_count,
+			events.size AS size, 
+			events.data AS data, 
+			events.created_at AS created_at,
+			events.expires_at AS expires_at
+		FROM events
+		JOIN consumers_events 
+			ON events.id = consumers_events.event_id 
+		WHERE 
+			consumers_events.consumer_id = ? 
+			AND consumers_events.acked = 0
+		ORDER BY events.id ASC;`, consumerId)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Finalize()
+
+	events = make([]*bus.Event, 0)
+
+	for {
+		event, err := loadEvent(stmt)
+		if errors.Is(err, ErrEventNotFound) {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+
+		events = append(events, event)
+	}
+
+	return events, nil
+}
+
 func loadEvent(stmt *sqlite.Stmt) (*bus.Event, error) {
 	hasRow, err := stmt.Step()
 	if err != nil {

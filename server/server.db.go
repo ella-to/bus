@@ -9,6 +9,13 @@ import (
 	"ella.to/sqlite"
 )
 
+func (h *Handler) LoadNotAckedEvents(ctx context.Context, consumerId string) (events []*bus.Event, err error) {
+	h.dbw.Submit(func(conn *sqlite.Conn) {
+		events, err = storage.LoadNotAckedEvents(ctx, conn, consumerId)
+	})
+	return
+}
+
 func (h *Handler) AppendEvents(ctx context.Context, event *bus.Event) (err error) {
 	h.batch.Add(event)
 	return

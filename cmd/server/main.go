@@ -18,7 +18,7 @@ func main() {
 	os.Remove(testDbPath + "-shm")
 	os.Remove(testDbPath + "-wal")
 
-	slog.SetLogLoggerLevel(slog.LevelDebug)
+	slog.SetLogLoggerLevel(slog.LevelInfo)
 
 	addr := "0.0.0.0:2021"
 

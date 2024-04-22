@@ -222,6 +222,18 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	var msgsCount int64
 	var prevEventId string
 
+	// load any pending events
+	notAckedEvents, err := h.LoadNotAckedEvents(ctx, consumer.Id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// push any pending events
+	for _, event := range notAckedEvents {
+		h.consumersEventMap.Push(consumer.Id, event)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():

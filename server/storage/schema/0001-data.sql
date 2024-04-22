@@ -73,3 +73,5 @@ CREATE TABLE
 CREATE INDEX IF NOT EXISTS consumers_events_consumer_id ON consumers_events (consumer_id);
 
 CREATE INDEX IF NOT EXISTS consumers_events_event_id ON consumers_events (event_id);
+
+CREATE INDEX IF NOT EXISTS consumers_events_acked ON consumers_events (acked);
