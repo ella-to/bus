@@ -9,6 +9,13 @@ import (
 	"ella.to/sqlite"
 )
 
+func (h *Handler) LoadQueueMaxAckedCount(ctx context.Context, queueName string) (ackedCount int64, err error) {
+	h.dbw.Submit(func(conn *sqlite.Conn) {
+		ackedCount, err = storage.LoadMaxAckedCountQueue(ctx, conn, queueName)
+	})
+	return
+}
+
 func (h *Handler) LoadQueueByName(ctx context.Context, name string) (queue *bus.Queue, err error) {
 	h.dbw.Submit(func(conn *sqlite.Conn) {
 		queue, err = storage.LoadQueueByName(ctx, conn, name)

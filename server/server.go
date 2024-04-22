@@ -159,6 +159,8 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var queueMaxAckedCount int64
+
 	// NOTE: if queue is not found, create a new queue
 	// this is essential for creating consumer with queue
 	if isQueue {
@@ -177,9 +179,16 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		ackedCount, err := h.LoadQueueMaxAckedCount(ctx, queueName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		// NOTE: overriding lastEventId and subject with the queue's info
 		lastEventId = queue.LastEventId
 		subject = queue.Pattern
+		queueMaxAckedCount = ackedCount
 	}
 
 	events := h.consumersEventMap.Add(id, batchSize)
@@ -218,6 +227,8 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		consumer.AckedCount = queueMaxAckedCount
+
 		err = h.CreateConsumer(ctx, consumer)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -233,10 +244,10 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		// NOTE: queue consumers, should be deleted upon disconnection
 		// there is no need to store them in the database
 		if isQueue || !isDurable {
-			err := h.DeleteConsumer(context.Background(), id)
-			if err != nil {
-				slog.Error("failed to delete consumer", "consumer_id", id, "error", err)
-			}
+			// err := h.DeleteConsumer(context.Background(), id)
+			// if err != nil {
+			// 	slog.Error("failed to delete consumer", "consumer_id", id, "error", err)
+			// }
 		}
 	}()
 
