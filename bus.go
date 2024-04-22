@@ -1,8 +1,10 @@
 package bus
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"strings"
 	"sync"
 	"time"
@@ -104,18 +106,19 @@ func WithDurable() ConsumerOpt {
 	})
 }
 
-func WithFromBeginning() ConsumerOpt {
+func WithManualAck() ConsumerOpt {
 	return consumerOptFn(func(c *Consumer) error {
-		c.LastEventId = "oldest"
+		c.AckStrategy = "manual"
 		return nil
 	})
 }
 
+func WithFromOldest() ConsumerOpt {
+	return WithFromEventId("oldest")
+}
+
 func WithFromNewest() ConsumerOpt {
-	return consumerOptFn(func(c *Consumer) error {
-		c.LastEventId = "newest"
-		return nil
-	})
+	return WithFromEventId("newest")
 }
 
 func WithFromEventId(eventId string) ConsumerOpt {
@@ -143,6 +146,21 @@ func WithId(id string) ConsumerOpt {
 func WithBatchSize(size int64) ConsumerOpt {
 	return consumerOptFn(func(c *Consumer) error {
 		c.BatchSize = size
+		return nil
+	})
+}
+
+func WithReply() EventOpt {
+	return eventOptFn(func(evt *Event) error {
+		evt.Reply = fmt.Sprintf("inbox.%s", gen.NewID())
+		return nil
+	})
+}
+
+func WithConfirm(n int64) EventOpt {
+	return eventOptFn(func(evt *Event) error {
+		evt.Reply = fmt.Sprintf("confirm.%s", gen.NewID())
+		evt.ReplyCount = n
 		return nil
 	})
 }
@@ -192,6 +210,7 @@ type Consumer struct {
 	Id          string    `json:"id"`
 	Pattern     string    `json:"pattern"`
 	QueueName   string    `json:"queue_name"`
+	AckStrategy string    `json:"ack_strategy"` // manual, auto
 	Durable     bool      `json:"durable"`
 	BatchSize   int64     `json:"batch_size"`
 	AckedCount  int64     `json:"acked_count"`
@@ -278,5 +297,15 @@ func NewConsumersEventMap(size int, waitDuration time.Duration) *ConsumersEventM
 type Queue struct {
 	Name        string `json:"name"`
 	Pattern     string `json:"pattern"`
+	AckStrategy string `json:"ack_strategy"` // manual, auto
 	LastEventId string `json:"last_event_id"`
+}
+
+//
+// Stream
+//
+
+type Stream interface {
+	Publish(ctx context.Context, evt *Event) error
+	Consume(ctx context.Context, conOpts ...ConsumerOpt) iter.Seq2[*Event, error]
 }

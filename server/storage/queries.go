@@ -45,6 +45,7 @@ func LoadQueueByName(ctx context.Context, conn *sqlite.Conn, name string) (*bus.
 		SELECT 
 			name AS name, 
 			pattern AS pattern,
+			ack_strategy AS ack_strategy,
 			COALESCE(last_event_id, '') AS last_event_id 
 		FROM queues 
 		WHERE name = ?;`, name)
@@ -135,6 +136,7 @@ func loadQueue(stmt *sqlite.Stmt) (*bus.Queue, error) {
 
 	q.Name = stmt.GetText("name")
 	q.Pattern = stmt.GetText("pattern")
+	q.AckStrategy = stmt.GetText("ack_strategy")
 	q.LastEventId = stmt.GetText("last_event_id")
 
 	return q, nil
@@ -188,6 +190,7 @@ func loadConsumer(stmt *sqlite.Stmt) (*bus.Consumer, error) {
 	c.Id = stmt.GetText("id")
 	c.Pattern = stmt.GetText("pattern")
 	c.QueueName = stmt.GetText("queue_name")
+	c.AckStrategy = stmt.GetText("ack_strategy")
 	c.Durable = stmt.GetBool("durable")
 	c.BatchSize = stmt.GetInt64("batch_size")
 	c.AckedCount = stmt.GetInt64("acked_counts")
@@ -208,6 +211,7 @@ func LoadConsumerById(ctx context.Context, conn *sqlite.Conn, id string) (*bus.C
 			consumers.id AS id, 
 			consumers.pattern AS pattern,
 			consumers.queue_name AS queue_name,
+			consumers.ack_strategy AS ack_strategy,
 			consumers.durable AS durable,
 			consumers.batch_size AS batch_size,
 			consumers.acked_counts AS acked_counts,
@@ -253,6 +257,7 @@ func SaveConsumer(ctx context.Context, conn *sqlite.Conn, c *bus.Consumer) (err 
 				id,
 				pattern,
 				queue_name,
+				ack_strategy,
 				durable,
 				batch_size,
 				acked_counts,
@@ -261,11 +266,12 @@ func SaveConsumer(ctx context.Context, conn *sqlite.Conn, c *bus.Consumer) (err 
 				expires_in
 			) 
 		VALUES 
-			(?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO NOTHING;`,
 		c.Id,
 		c.Pattern,
 		queueName,
+		c.AckStrategy,
 		c.Durable,
 		c.BatchSize,
 		c.AckedCount,
