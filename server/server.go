@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"ella.to/bus"
@@ -137,10 +136,8 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		pos = "newest"
 	}
 
-	batchSize, err := strconv.ParseInt(qs.Get("batch_size"), 10, 64)
-	if err != nil {
-		batchSize = 1
-	}
+	// NOTE: Currently only support batch size of 1
+	batchSize := int64(1)
 
 	id := qs.Get("id")
 
