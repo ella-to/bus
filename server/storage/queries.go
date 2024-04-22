@@ -17,6 +17,29 @@ var (
 	ErrQueueNotFound    = errors.New("queue not found")
 )
 
+func LoadMaxAckedCountQueue(ctx context.Context, conn *sqlite.Conn, queueName string) (int64, error) {
+	stmt, err := conn.Prepare(ctx, `
+		SELECT 
+			MAX(acked_counts) AS acked_counts 
+		FROM consumers 
+		WHERE queue_name = ?;`, queueName)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Finalize()
+
+	hasRow, err := stmt.Step()
+	if err != nil {
+		return 0, err
+	}
+
+	if !hasRow {
+		return 0, ErrConsumerNotFound
+	}
+
+	return stmt.GetInt64("acked_counts"), nil
+}
+
 func LoadQueueByName(ctx context.Context, conn *sqlite.Conn, name string) (*bus.Queue, error) {
 	stmt, err := conn.Prepare(ctx, `
 		SELECT 
