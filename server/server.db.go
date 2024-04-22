@@ -9,6 +9,22 @@ import (
 	"ella.to/sqlite"
 )
 
+func (h *Handler) LoadQueueByName(ctx context.Context, name string) (queue *bus.Queue, err error) {
+	h.dbw.Submit(func(conn *sqlite.Conn) {
+		queue, err = storage.LoadQueueByName(ctx, conn, name)
+	})
+	return
+
+}
+
+func (h *Handler) CreateQueue(ctx context.Context, queue *bus.Queue) (err error) {
+	h.dbw.Submit(func(conn *sqlite.Conn) {
+		err = storage.SaveQueue(ctx, conn, queue)
+	})
+	return
+
+}
+
 func (h *Handler) LoadNotAckedEvents(ctx context.Context, consumerId string) (events []*bus.Event, err error) {
 	h.dbw.Submit(func(conn *sqlite.Conn) {
 		events, err = storage.LoadNotAckedEvents(ctx, conn, consumerId)

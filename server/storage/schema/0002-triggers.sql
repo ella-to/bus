@@ -2,6 +2,8 @@
 -- Trigger notify function when a new record is inserted into 
 -- consumers_events with acked = 0
 --
+-- NOTE: This trigger runs for both non-queue and queue consumers
+--
 CREATE TRIGGER IF NOT EXISTS trigger_consumers_events_notify
 --
 AFTER INSERT ON consumers_events
@@ -33,6 +35,8 @@ END;
 -- INSERT relevant events based on pattern of consumer
 -- and last_event_id and LIMIT it based on batch size
 -- if and only if batch_size > count of not events that not acked
+--
+-- NOTE: This trigger only runs for non-queue consumers
 --
 CREATE TRIGGER IF NOT EXISTS trigger_consumers_events_insert
 --
@@ -68,9 +72,63 @@ LIMIT
 END;
 
 --
+-- NOTE: This Trigger only runs for queue consumers
+--
+CREATE TRIGGER IF NOT EXISTS trigger_queue_consumers_events_insert
+--
+AFTER INSERT ON consumers
+--
+FOR EACH ROW WHEN NEW.queue_name IS NOT NULL
+--
+BEGIN
+--
+INSERT INTO
+    consumers_events (consumer_id, event_id)
+SELECT
+    NEW.id as consumer_id,
+    id as event_id
+FROM
+    events
+WHERE
+    subject LIKE NEW.pattern
+    AND id > COALESCE(NEW.last_event_id, '')
+    AND consumer_id IN (
+        SELECT
+            id
+        FROM
+            (
+                SELECT
+                    id,
+                    MIN(acked_counts)
+                FROM
+                    consumers
+                WHERE
+                    queue_name = NEW.queue_name
+                LIMIT
+                    1
+            )
+    )
+ORDER BY
+    id
+LIMIT
+    NEW.batch_size - (
+        SELECT
+            COUNT(*)
+        FROM
+            consumers_events
+        WHERE
+            consumer_id = NEW.id
+            AND acked = 0
+    );
+
+END;
+
+--
 -- This triggers, insert events into consumers_events table
 -- based on the pattern of the consumer and last_event_id
 -- and batch_size and acked count
+--
+-- NOTE: This trigger only runs for non-queue consumers
 --
 CREATE TRIGGER IF NOT EXISTS trigger_events_inserted
 --
@@ -104,7 +162,7 @@ WHERE
 END;
 
 --
---
+-- NOTE: This Trigger only runs for non-queue consumers
 --
 CREATE TRIGGER IF NOT EXISTS trigger_consumers_events_acked
 --
