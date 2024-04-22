@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"ella.to/bus"
@@ -118,8 +119,8 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isDurable := qs.Has("durable")
-	queue := qs.Get("queue")
-	isQueue := queue != ""
+	queueName := qs.Get("queue")
+	isQueue := queueName != ""
 	isAutoAck := qs.Has("auto_ack")
 
 	if isDurable && isQueue {
@@ -143,7 +144,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 
 	id := qs.Get("id")
 
-	if id != "" && queue != "" {
+	if id != "" && isQueue {
 		http.Error(w, "id cannot be used with queue", http.StatusBadRequest)
 		return
 	}
@@ -156,6 +157,29 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// NOTE: if queue is not found, create a new queue
+	// this is essential for creating consumer with queue
+	if isQueue {
+		queue, err := h.LoadQueueByName(ctx, queueName)
+		if errors.Is(err, storage.ErrQueueNotFound) {
+			queue = &bus.Queue{
+				Name:        queueName,
+				Pattern:     strings.ReplaceAll(subject, "*", "%"),
+				LastEventId: lastEventId,
+			}
+
+			err = h.CreateQueue(ctx, queue)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// NOTE: overriding lastEventId and subject with the queue's info
+		lastEventId = queue.LastEventId
+		subject = queue.Pattern
 	}
 
 	events := h.consumersEventMap.Add(id, batchSize)
@@ -184,8 +208,8 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 			opts = append(opts, bus.WithDurable())
 		}
 
-		if queue != "" {
-			opts = append(opts, bus.WithQueue(queue))
+		if isQueue {
+			opts = append(opts, bus.WithQueue(queueName))
 		}
 
 		consumer, err = bus.NewConsumer(opts...)

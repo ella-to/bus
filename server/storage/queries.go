@@ -14,7 +14,49 @@ import (
 var (
 	ErrEventNotFound    = errors.New("event not found")
 	ErrConsumerNotFound = errors.New("consumer not found")
+	ErrQueueNotFound    = errors.New("queue not found")
 )
+
+func LoadQueueByName(ctx context.Context, conn *sqlite.Conn, name string) (*bus.Queue, error) {
+	stmt, err := conn.Prepare(ctx, `
+		SELECT 
+			name AS name, 
+			pattern AS pattern,
+			COALESCE(last_event_id, '') AS last_event_id 
+		FROM queues 
+		WHERE name = ?;`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Finalize()
+
+	return loadQueue(stmt)
+}
+
+func SaveQueue(ctx context.Context, conn *sqlite.Conn, queue *bus.Queue) (err error) {
+	defer conn.Save(&err)()
+
+	var lastEventId any
+	if queue.LastEventId != "" {
+		lastEventId = queue.LastEventId
+	}
+
+	stmt, err := conn.Prepare(ctx, `
+		INSERT INTO queues 
+			(name, pattern, last_event_id) 
+		VALUES 
+			(?, ?, ?)
+		ON CONFLICT (name) DO NOTHING;`,
+		queue.Name, queue.Pattern, lastEventId)
+	if err != nil {
+		return err
+	}
+
+	defer stmt.Finalize()
+
+	_, err = stmt.Step()
+	return err
+}
 
 func LoadNotAckedEvents(ctx context.Context, conn *sqlite.Conn, consumerId string) (events []*bus.Event, err error) {
 	stmt, err := conn.Prepare(ctx, `
@@ -54,6 +96,25 @@ func LoadNotAckedEvents(ctx context.Context, conn *sqlite.Conn, consumerId strin
 	}
 
 	return events, nil
+}
+
+func loadQueue(stmt *sqlite.Stmt) (*bus.Queue, error) {
+	hasRow, err := stmt.Step()
+	if err != nil {
+		return nil, err
+	}
+
+	if !hasRow {
+		return nil, ErrQueueNotFound
+	}
+
+	q := &bus.Queue{}
+
+	q.Name = stmt.GetText("name")
+	q.Pattern = stmt.GetText("pattern")
+	q.LastEventId = stmt.GetText("last_event_id")
+
+	return q, nil
 }
 
 func loadEvent(stmt *sqlite.Stmt) (*bus.Event, error) {

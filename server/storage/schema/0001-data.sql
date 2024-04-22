@@ -26,12 +26,15 @@ CREATE INDEX IF NOT EXISTS events_expires_at ON events (expires_at);
 CREATE TABLE
     IF NOT EXISTS queues (
         name TEXT NOT NULL,
+        pattern TEXT NOT NULL,
         last_event_id TEXT,
         FOREIGN KEY (last_event_id) REFERENCES events (id) ON DELETE SET NULL,
         PRIMARY KEY (name)
     );
 
 CREATE INDEX IF NOT EXISTS queues_last_event_id ON queues (last_event_id);
+
+CREATE INDEX IF NOT EXISTS queues_pattern ON queues (pattern);
 
 --
 -- CONSUMERS

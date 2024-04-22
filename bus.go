@@ -277,5 +277,6 @@ func NewConsumersEventMap(size int, waitDuration time.Duration) *ConsumersEventM
 
 type Queue struct {
 	Name        string `json:"name"`
+	Pattern     string `json:"pattern"`
 	LastEventId string `json:"last_event_id"`
 }
