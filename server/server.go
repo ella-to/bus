@@ -159,7 +159,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events := h.consumersEventMap.Add(id, batchSize+1000)
+	events := h.consumersEventMap.Add(id, batchSize)
 	defer h.consumersEventMap.Remove(id)
 
 	consumer, err := h.LoadConsumerById(ctx, id)

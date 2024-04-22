@@ -114,12 +114,16 @@ AND NEW.event_id = (
     -- Get the last event_id of the consumer that has been acked
     -- since the update can be executed in batch
     SELECT
-        MAX(event_id)
+        event_id
     FROM
         consumers_events
     WHERE
         consumer_id = NEW.consumer_id
         AND acked = 1
+    ORDER BY
+        event_id DESC
+    LIMIT
+        1
 )
 --
 BEGIN
@@ -150,6 +154,15 @@ WHERE
             consumer_id = NEW.consumer_id
             AND acked = 0
     ) < (
+        SELECT
+            batch_size
+        FROM
+            consumers
+        WHERE
+            id = NEW.consumer_id
+    )
+LIMIT
+    (
         SELECT
             batch_size
         FROM
