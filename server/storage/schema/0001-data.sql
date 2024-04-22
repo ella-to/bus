@@ -27,6 +27,7 @@ CREATE TABLE
     IF NOT EXISTS queues (
         name TEXT NOT NULL,
         pattern TEXT NOT NULL,
+        ack_strategy TEXT NOT NULL DEFAULT 'manual',
         last_event_id TEXT,
         FOREIGN KEY (last_event_id) REFERENCES events (id) ON DELETE SET NULL,
         PRIMARY KEY (name)
@@ -44,6 +45,7 @@ CREATE TABLE
         id TEXT NOT NULL,
         pattern TEXT NOT NULL,
         queue_name TEXT,
+        ack_strategy TEXT NOT NULL DEFAULT 'manual',
         durable INTEGER NOT NULL DEFAULT 0,
         batch_size INTEGER NOT NULL DEFAULT 1,
         acked_counts INTEGER NOT NULL DEFAULT 0,

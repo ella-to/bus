@@ -121,7 +121,11 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	isDurable := qs.Has("durable")
 	queueName := qs.Get("queue")
 	isQueue := queueName != ""
-	isAutoAck := qs.Has("auto_ack")
+	ackStrategy := qs.Get("ack_strategy")
+	if ackStrategy == "" {
+		ackStrategy = "auto"
+	}
+	isAutoAck := ackStrategy == "auto"
 
 	if isDurable && isQueue {
 		http.Error(w, "durable and queue are mutually exclusive", http.StatusBadRequest)
@@ -169,6 +173,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 			queue = &bus.Queue{
 				Name:        queueName,
 				Pattern:     strings.ReplaceAll(subject, "*", "%"),
+				AckStrategy: ackStrategy,
 				LastEventId: lastEventId,
 			}
 
@@ -188,6 +193,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		// NOTE: overriding lastEventId and subject with the queue's info
 		lastEventId = queue.LastEventId
 		subject = queue.Pattern
+		ackStrategy = queue.AckStrategy
 		queueMaxAckedCount = ackedCount
 	}
 
@@ -244,10 +250,10 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		// NOTE: queue consumers, should be deleted upon disconnection
 		// there is no need to store them in the database
 		if isQueue || !isDurable {
-			// err := h.DeleteConsumer(context.Background(), id)
-			// if err != nil {
-			// 	slog.Error("failed to delete consumer", "consumer_id", id, "error", err)
-			// }
+			err := h.DeleteConsumer(context.Background(), id)
+			if err != nil {
+				slog.Error("failed to delete consumer", "consumer_id", id, "error", err)
+			}
 		}
 	}()
 
@@ -387,7 +393,7 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 		consumersEventMap: bus.NewConsumersEventMap(conf.dbPoolSize, 2*time.Second),
 	}
 
-	h.batch = batch.NewSort(10, 500*time.Millisecond, func(events []*bus.Event) {
+	h.batch = batch.NewSort(20, 500*time.Millisecond, func(events []*bus.Event) {
 		h.dbw.Submit(func(conn *sqlite.Conn) {
 			ctx := context.Background()
 			err := storage.AppendEvents(ctx, conn, events...)
@@ -402,7 +408,7 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 		return nil, err
 	}
 
-	h.dbw = sqlite.NewWorker(db, 100, int64(conf.dbPoolSize))
+	h.dbw = sqlite.NewWorker(db, 1000, int64(conf.dbPoolSize))
 
 	h.mux.HandleFunc("POST /", h.publishHandler)          // POST /
 	h.mux.HandleFunc("GET /", h.consumerHandler)          // GET /?subject=foo&durable&queue=bar&pos=oldest|newest|<event_id>&id=123&auto_ack
