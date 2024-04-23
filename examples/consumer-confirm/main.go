@@ -29,7 +29,7 @@ func main() {
 				slog.Debug("closing consumer", "consumer", i)
 			}()
 
-			for msg, err := range c.Consume(ctx, bus.WithSubject("a.b.c"), bus.WithFromOldest()) {
+			for msg, err := range c.Get(ctx, bus.WithSubject("a.b.c"), bus.WithFromOldest()) {
 				if err != nil {
 					fmt.Println(msg, err)
 				}
@@ -42,7 +42,7 @@ func main() {
 		panic(err)
 	}
 
-	err = c.Publish(ctx, evt)
+	err = c.Put(ctx, evt)
 	if err != nil {
 		panic(err)
 	}

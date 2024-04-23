@@ -23,12 +23,12 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 			return resp, err
 		}
 
-		err = stream.Publish(ctx, evt)
+		err = stream.Put(ctx, evt)
 		if err != nil {
 			return resp, err
 		}
 
-		for evt, err := range stream.Consume(
+		for evt, err := range stream.Get(
 			ctx,
 			WithSubject(evt.Reply),
 			WithFromOldest(),
@@ -70,7 +70,7 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 
 func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn RequestReplyFunc[Req, Resp]) {
 	queueName := fmt.Sprintf("queue.%s", subject)
-	events := stream.Consume(
+	events := stream.Get(
 		ctx,
 		WithSubject(subject),
 		WithFromNewest(),
@@ -108,7 +108,7 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 				return
 			}
 
-			err = stream.Publish(ctx, replyEvent)
+			err = stream.Put(ctx, replyEvent)
 			if err != nil {
 				return
 			}

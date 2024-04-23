@@ -323,11 +323,25 @@ type Queue struct {
 // Stream
 //
 
-type Stream interface {
-	Publish(ctx context.Context, evt *Event) error
-	Consume(ctx context.Context, conOpts ...ConsumerOpt) iter.Seq2[*Event, error]
+type Putter interface {
+	Put(ctx context.Context, evt *Event) error
+}
+
+type Getter interface {
+	Get(ctx context.Context, opts ...ConsumerOpt) iter.Seq2[*Event, error]
 }
 
 type Acker interface {
 	Ack(ctx context.Context, consumerId string, eventId string) error
+}
+
+type Closer interface {
+	Close(ctx context.Context, consumerId string) error
+}
+
+type Stream interface {
+	Putter
+	Getter
+	Acker
+	Closer
 }

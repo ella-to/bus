@@ -48,9 +48,8 @@ type Client struct {
 }
 
 var _ bus.Stream = (*Client)(nil)
-var _ bus.Acker = (*Client)(nil)
 
-func (c *Client) Publish(ctx context.Context, evt *bus.Event) error {
+func (c *Client) Put(ctx context.Context, evt *bus.Event) error {
 	if c.scope != "" {
 		evt.Subject = fmt.Sprintf("%s.%s", c.scope, evt.Subject)
 		if evt.Reply != "" {
@@ -95,7 +94,7 @@ func (c *Client) Publish(ctx context.Context, evt *bus.Event) error {
 		return nil
 	}
 
-	for _, err := range c.Consume(ctx, bus.WithSubject(evt.Reply), bus.WithFromOldest()) {
+	for _, err := range c.Get(ctx, bus.WithSubject(evt.Reply), bus.WithFromOldest()) {
 		if err != nil {
 			return err
 		}
@@ -109,7 +108,7 @@ func (c *Client) Publish(ctx context.Context, evt *bus.Event) error {
 	return nil
 }
 
-func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.Seq2[*bus.Event, error] {
+func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.Seq2[*bus.Event, error] {
 	consumer, err := bus.NewConsumer(consumerOpts...)
 	if err != nil {
 		return newIterErr(err)
@@ -175,7 +174,7 @@ func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) i
 					if err != nil {
 						return
 					}
-					err = c.Publish(ctx, confirmEvent)
+					err = c.Put(ctx, confirmEvent)
 				}
 
 			case "error":
@@ -212,11 +211,44 @@ func (c *Client) Ack(ctx context.Context, consumerId, eventId string) error {
 		return err
 	}
 
+	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		b, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
 		}
+		return fmt.Errorf(string(b))
+	}
+
+	return nil
+}
+
+func (c *Client) Close(ctx context.Context, consumerId string) error {
+	var url strings.Builder
+
+	url.WriteString(c.addr)
+	url.WriteString("/?consumer_id=")
+	url.WriteString(consumerId)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url.String(), nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+
 		return fmt.Errorf(string(b))
 	}
 
