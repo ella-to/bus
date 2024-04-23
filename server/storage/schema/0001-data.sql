@@ -63,6 +63,8 @@ CREATE INDEX IF NOT EXISTS consumers_queue_name ON consumers (queue_name);
 
 CREATE INDEX IF NOT EXISTS consumers_last_event_id ON consumers (last_event_id);
 
+CREATE INDEX IF NOT EXISTS consumers_expires_in ON consumers (expires_in);
+
 --
 -- CONSUMERS_EVENTS
 --

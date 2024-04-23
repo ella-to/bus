@@ -20,11 +20,12 @@ import (
 // OPTIONS
 
 type config struct {
-	dbOpts              []sqlite.OptionFunc
-	dbPoolSize          int
-	batchWindowSize     int
-	batchWindowDuration time.Duration
-	workerBufferSize    int64
+	dbOpts                 []sqlite.OptionFunc
+	dbPoolSize             int
+	batchWindowSize        int
+	batchWindowDuration    time.Duration
+	workerBufferSize       int64
+	cleanExpiredEventsFreq time.Duration
 }
 
 type Opt interface {
@@ -75,6 +76,13 @@ func WithWorkerBufferSize(size int64) Opt {
 	})
 }
 
+func WithCleanExpiredEventsFreq(freq time.Duration) Opt {
+	return optFn(func(s *config) error {
+		s.cleanExpiredEventsFreq = freq
+		return nil
+	})
+}
+
 // HANDLER
 
 type Handler struct {
@@ -82,6 +90,7 @@ type Handler struct {
 	dbw               *sqlite.Worker
 	consumersEventMap *bus.ConsumersEventMap
 	batch             *batch.Sort
+	closeCh           chan struct{}
 }
 
 var _ http.Handler = (*Handler)(nil)
@@ -393,6 +402,26 @@ func (h *Handler) notify(consumerId string, event *bus.Event) {
 	}
 }
 
+func (h *Handler) removeExpiredEventsLoop(ctx context.Context, freq time.Duration) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(freq):
+			err := h.DeleteExpiredEvents(ctx)
+			if err != nil {
+				slog.Error("failed to delete expired events", "error", err)
+			}
+		case <-h.closeCh:
+			return
+		}
+	}
+}
+
+func (h *Handler) Close() {
+	close(h.closeCh)
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
@@ -402,9 +431,10 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 		dbOpts: []sqlite.OptionFunc{
 			sqlite.WithMemory(),
 		},
-		batchWindowSize:     20,
-		batchWindowDuration: 500 * time.Millisecond,
-		workerBufferSize:    1000,
+		batchWindowSize:        20,
+		batchWindowDuration:    500 * time.Millisecond,
+		workerBufferSize:       1000,
+		cleanExpiredEventsFreq: 30 * time.Second,
 	}
 	for _, opt := range opts {
 		err := opt.configureHandler(conf)
@@ -419,6 +449,7 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 
 	h := &Handler{
 		consumersEventMap: bus.NewConsumersEventMap(conf.dbPoolSize, 2*time.Second),
+		closeCh:           make(chan struct{}),
 	}
 
 	h.batch = batch.NewSort(conf.batchWindowSize, conf.batchWindowDuration, func(events []*bus.Event) {
@@ -442,6 +473,8 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 	h.mux.HandleFunc("GET /", h.consumerHandler)          // GET /?subject=foo&durable&queue=bar&pos=oldest|newest|<event_id>&id=123&auto_ack
 	h.mux.HandleFunc("HEAD /", h.ackedHandler)            // HEAD /?consumer_id=123&event_id=456
 	h.mux.HandleFunc("DELETE /", h.deleteConsumerHandler) // DELETE /?consumer_id=123
+
+	go h.removeExpiredEventsLoop(ctx, conf.cleanExpiredEventsFreq)
 
 	return h, nil
 }

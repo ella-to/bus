@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"ella.to/bus"
 	"ella.to/sqlite"
@@ -405,4 +406,28 @@ func AckEvent(ctx context.Context, conn *sqlite.Conn, consumerId, eventId string
 
 	_, err = stmt.Step()
 	return err
+}
+
+func DeleteExpiredEventsBeforeDate(ctx context.Context, conn *sqlite.Conn, before time.Time) (err error) {
+	defer conn.Save(&err)()
+
+	const sql = `DELETE FROM events WHERE expires_at < ?;`
+
+	stmt, err := conn.Prepare(ctx, sql, before)
+	if err != nil {
+		return err
+	}
+
+	defer stmt.Finalize()
+
+	_, err = stmt.Step()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func DeleteExpiredEvents(ctx context.Context, conn *sqlite.Conn) (err error) {
+	return DeleteExpiredEventsBeforeDate(ctx, conn, time.Now())
 }

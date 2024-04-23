@@ -99,3 +99,10 @@ func (h *Handler) CreateConsumer(ctx context.Context, consumer *bus.Consumer) (e
 
 	return
 }
+
+func (h *Handler) DeleteExpiredEvents(ctx context.Context) (err error) {
+	h.dbw.Submit(func(conn *sqlite.Conn) {
+		err = storage.DeleteExpiredEvents(ctx, conn)
+	})
+	return
+}

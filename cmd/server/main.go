@@ -90,6 +90,15 @@ func getWorkerBufferSize(serverOpts []server.Opt) []server.Opt {
 	return append(serverOpts, server.WithWorkerBufferSize(value))
 }
 
+func getCleanExpiredEventsFreq(serverOpts []server.Opt) []server.Opt {
+	value, err := time.ParseDuration(os.Getenv("BUS_CLEAN_EXPIRED_EVENTS_FREQ"))
+	if err != nil {
+		return serverOpts
+	}
+
+	return append(serverOpts, server.WithCleanExpiredEventsFreq(value))
+}
+
 func main() {
 	ctx := context.TODO()
 
@@ -104,6 +113,7 @@ func main() {
 	serverOpts = getBatchWindowSize(serverOpts)
 	serverOpts = getBatchWindowDuration(serverOpts)
 	serverOpts = getWorkerBufferSize(serverOpts)
+	serverOpts = getCleanExpiredEventsFreq(serverOpts)
 
 	handler, err := server.New(
 		ctx,
