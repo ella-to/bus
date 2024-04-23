@@ -1,5 +1,7 @@
 ella.to/sqlite v0.0.2 h1:lSC3O+DrIor1h4mQaxTWB3rM+Tq2lLyuRNSLehJ2TD4=
 ella.to/sqlite v0.0.2/go.mod h1:yfBKHCOmUG3L7EJxmaEU4SQ/xLtVCxvbOlYtgaBftSk=
+ella.to/sqlite v0.0.3 h1:fgRQv3CamPnDX6q9s1j7QwwgdGEk+dHPkJ0CzlAtVXc=
+ella.to/sqlite v0.0.3/go.mod h1:yfBKHCOmUG3L7EJxmaEU4SQ/xLtVCxvbOlYtgaBftSk=
 ella.to/sse v0.0.1 h1:zoxtMzSYrggKC+PJy+GPIeaT6JfYRTCFs38G2pL2ZeE=
 ella.to/sse v0.0.1/go.mod h1:BHO+K9lPEBU+G7KZaSOKFVw1/scFb41waHcXfvwxLLI=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
