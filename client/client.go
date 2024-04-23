@@ -67,7 +67,7 @@ func (c *Client) Put(ctx context.Context, evt *bus.Event) error {
 		}
 	}()
 
-	url := c.addr + "/publish"
+	url := c.addr + "/"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, pr)
 	if err != nil {
@@ -130,7 +130,7 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 		qs.Set("ack_strategy", consumer.AckStrategy)
 	}
 
-	url := c.addr + "/consume?" + qs.Encode()
+	url := c.addr + "/?" + qs.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
