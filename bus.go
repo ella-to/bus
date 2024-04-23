@@ -12,6 +12,8 @@ import (
 	"ella.to/bus/internal/gen"
 )
 
+const DefaultAddr = "http://0.0.0.0:8080"
+
 // magic number for representing 2121-05-30T12:26:00-04:00
 const DefaultExpiresAtUnix = 4778065560
 
