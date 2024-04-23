@@ -48,6 +48,7 @@ type Client struct {
 }
 
 var _ bus.Stream = (*Client)(nil)
+var _ bus.Acker = (*Client)(nil)
 
 func (c *Client) Publish(ctx context.Context, evt *bus.Event) error {
 	if c.scope != "" {
@@ -142,6 +143,11 @@ func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) i
 		return newIterErr(err)
 	}
 
+	header := resp.Header
+	consumer.Id = header.Get("Consumer-Id")
+	consumer.QueueName = header.Get("Consumer-Queue")
+	isAutoAck := header.Get("Consumer-Auto-Ack") == "true"
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	msgs := sse.Receive(ctx, resp.Body)
@@ -159,6 +165,11 @@ func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) i
 			case "event":
 				evt = &bus.Event{}
 				err = json.Unmarshal(msg.Data, evt)
+
+				if err == nil && !isAutoAck {
+					bus.AttachEventMetaData(evt, consumer.Id, c)
+				}
+
 				if err == nil && evt.ReplyCount > 0 {
 					confirmEvent, err := bus.NewEvent(bus.WithSubject(evt.Reply), bus.WithData([]byte(`{"type":"confirm"}`)))
 					if err != nil {
@@ -179,6 +190,37 @@ func (c *Client) Consume(ctx context.Context, consumerOpts ...bus.ConsumerOpt) i
 			}
 		}
 	}
+}
+
+func (c *Client) Ack(ctx context.Context, consumerId, eventId string) error {
+	var url strings.Builder
+
+	url.WriteString(c.addr)
+	url.WriteString("/ack?")
+	url.WriteString("event_id=")
+	url.WriteString(eventId)
+	url.WriteString("&consumer_id=")
+	url.WriteString(consumerId)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url.String(), nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf(string(b))
+	}
+
+	return nil
 }
 
 func New(opts ...ClientOpt) (*Client, error) {

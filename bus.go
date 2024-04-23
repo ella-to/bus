@@ -165,6 +165,13 @@ func WithConfirm(n int64) EventOpt {
 	})
 }
 
+// AttachEventMetaData is used to set the consumerId and acker for an event
+// NOTE: Don't call this directly, this is used internally by the library
+func AttachEventMetaData(evt *Event, consumerId string, acker Acker) {
+	evt.consumerId = consumerId
+	evt.acker = acker
+}
+
 //
 // EVENTS
 //
@@ -178,6 +185,17 @@ type Event struct {
 	Data       json.RawMessage `json:"data"`
 	CreatedAt  time.Time       `json:"created_at"`
 	ExpiresAt  *time.Time      `json:"expires_at,omitempty"`
+
+	consumerId string
+	acker      Acker
+}
+
+func (evt *Event) Ack(ctx context.Context) error {
+	if evt.acker == nil {
+		return nil
+	}
+
+	return evt.acker.Ack(ctx, evt.consumerId, evt.Id)
 }
 
 func NewEvent(opts ...EventOpt) (*Event, error) {
@@ -308,4 +326,8 @@ type Queue struct {
 type Stream interface {
 	Publish(ctx context.Context, evt *Event) error
 	Consume(ctx context.Context, conOpts ...ConsumerOpt) iter.Seq2[*Event, error]
+}
+
+type Acker interface {
+	Ack(ctx context.Context, consumerId string, eventId string) error
 }

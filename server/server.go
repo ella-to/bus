@@ -413,6 +413,10 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 		}
 	}
 
+	if conf.dbPoolSize == 0 {
+		return nil, errors.New("db pool size is required")
+	}
+
 	h := &Handler{
 		consumersEventMap: bus.NewConsumersEventMap(conf.dbPoolSize, 2*time.Second),
 	}

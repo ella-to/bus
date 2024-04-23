@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"time"
 )
@@ -12,7 +13,12 @@ type RequestReplyFunc[Req, Resp any] func(context.Context, Req) (Resp, error)
 
 func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req, Resp] {
 	return func(ctx context.Context, req Req) (resp Resp, err error) {
-		evt, err := NewEvent(WithSubject(subject), WithReply(), WithJsonData(req), WithExpiresAt(30*time.Second))
+		evt, err := NewEvent(
+			WithSubject(subject),
+			WithReply(),
+			WithJsonData(req),
+			WithExpiresAt(30*time.Second),
+		)
 		if err != nil {
 			return resp, err
 		}
@@ -22,7 +28,11 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 			return resp, err
 		}
 
-		for evt, err := range stream.Consume(ctx, WithSubject(evt.Reply), WithFromOldest()) {
+		for evt, err := range stream.Consume(
+			ctx,
+			WithSubject(evt.Reply),
+			WithFromOldest(),
+		) {
 			if err != nil {
 				return resp, err
 			}
@@ -38,7 +48,12 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 			}
 
 			if replyMsg.Type == "error" {
-				return resp, fmt.Errorf(string(replyMsg.Payload))
+				var errMsg string
+				err = json.Unmarshal(replyMsg.Payload, &errMsg)
+				if err != nil {
+					return resp, err
+				}
+				return resp, fmt.Errorf(errMsg)
 			}
 
 			resp, err = jsonUnmarshal[Resp](replyMsg.Payload)
@@ -60,6 +75,7 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 		WithSubject(subject),
 		WithFromNewest(),
 		WithQueue(queueName),
+		WithManualAck(),
 	)
 
 	go func() {
@@ -95,6 +111,11 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 			err = stream.Publish(ctx, replyEvent)
 			if err != nil {
 				return
+			}
+
+			err = evt.Ack(ctx)
+			if err != nil {
+				slog.Error("failed to acked event", "error", err)
 			}
 		}
 	}()
