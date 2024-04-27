@@ -129,6 +129,9 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 	if consumer.AckStrategy != "" {
 		qs.Set("ack_strategy", consumer.AckStrategy)
 	}
+	if consumer.BatchSize > 0 {
+		qs.Set("batch_size", fmt.Sprintf("%d", consumer.BatchSize))
+	}
 
 	url := c.addr + "/?" + qs.Encode()
 
@@ -142,10 +145,19 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 		return newIterErr(err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return newIterErr(err)
+		}
+
+		return newIterErr(fmt.Errorf(string(b)))
+	}
+
 	header := resp.Header
 	consumer.Id = header.Get("Consumer-Id")
 	consumer.QueueName = header.Get("Consumer-Queue")
-	isAutoAck := header.Get("Consumer-Auto-Ack") == "true"
+	isAutoAck := header.Get("Consumer-Ack-Strategy") == "auto"
 
 	ctx, cancel := context.WithCancel(ctx)
 

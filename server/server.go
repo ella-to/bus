@@ -7,11 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
+	"strconv"
 	"time"
 
 	"ella.to/bus"
-	"ella.to/bus/internal/batch"
 	"ella.to/bus/server/storage"
 	"ella.to/sqlite"
 	"ella.to/sse"
@@ -86,11 +85,11 @@ func WithCleanExpiredEventsFreq(freq time.Duration) Opt {
 // HANDLER
 
 type Handler struct {
-	mux               http.ServeMux
-	dbw               *sqlite.Worker
-	consumersEventMap *bus.ConsumersEventMap
-	batch             *batch.Sort
-	closeCh           chan struct{}
+	dbw                *sqlite.Worker
+	mux                http.ServeMux
+	consumersEventsMap *ConsumersEventsMap
+	actions            *Actions
+	closeSignal        chan struct{}
 }
 
 var _ http.Handler = (*Handler)(nil)
@@ -118,7 +117,7 @@ func (h *Handler) publishHandler(w http.ResponseWriter, r *http.Request) {
 	evt.Id = bus.GetEventId()
 	evt.CreatedAt = time.Now()
 
-	err = h.AppendEvents(ctx, evt)
+	err = h.actions.Put(ctx, evt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -151,6 +150,12 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	if ackStrategy == "" {
 		ackStrategy = "auto"
 	}
+
+	if ackStrategy != "auto" && ackStrategy != "manual" {
+		http.Error(w, "invalid ack_strategy", http.StatusBadRequest)
+		return
+	}
+
 	isAutoAck := ackStrategy == "auto"
 
 	if isDurable && isQueue {
@@ -169,8 +174,10 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		pos = "newest"
 	}
 
-	// NOTE: Currently only support batch size of 1
-	batchSize := int64(1)
+	batchSize, err := strconv.ParseInt(qs.Get("batch_size"), 10, 64)
+	if err != nil || batchSize < 1 {
+		batchSize = 1
+	}
 
 	id := qs.Get("id")
 
@@ -183,103 +190,43 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		id = bus.GetConsumerId()
 	}
 
-	lastEventId, err := h.GetLastEventId(ctx, pos)
+	consOpts := []bus.ConsumerOpt{
+		bus.WithId(id),
+		bus.WithSubject(subject),
+		bus.WithQueue(queueName),
+		bus.WithBatchSize(batchSize),
+		bus.WithFromEventId(pos),
+	}
+
+	if isDurable {
+		consOpts = append(consOpts, bus.WithDurable())
+	}
+
+	if !isAutoAck {
+		consOpts = append(consOpts, bus.WithManualAck())
+	}
+
+	consumer, err := bus.NewConsumer(consOpts...)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	var queueMaxAckedCount int64
+	consumer.UpdatedAt = time.Now()
 
-	// NOTE: if queue is not found, create a new queue
-	// this is essential for creating consumer with queue
-	if isQueue {
-		queue, err := h.LoadQueueByName(ctx, queueName)
-		if errors.Is(err, storage.ErrQueueNotFound) {
-			queue = &bus.Queue{
-				Name:        queueName,
-				Pattern:     strings.ReplaceAll(subject, "*", "%"),
-				AckStrategy: ackStrategy,
-				LastEventId: lastEventId,
-			}
-
-			err = h.CreateQueue(ctx, queue)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-
-		ackedCount, err := h.LoadQueueMaxAckedCount(ctx, queueName)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// NOTE: overriding lastEventId and subject with the queue's info
-		lastEventId = queue.LastEventId
-		subject = queue.Pattern
-		ackStrategy = queue.AckStrategy
-		queueMaxAckedCount = ackedCount
-	}
-
-	events := h.consumersEventMap.Add(id, batchSize)
-	defer h.consumersEventMap.Remove(id)
-
-	// need to call this here before creating the consumer
-	// because once the consumer is created, triggers will start
-	// pumping events to the consumer and it might leads to
-	// pipe is full error
-	notAckedEvents, err := h.LoadNotAckedEvents(ctx, id)
+	events, err := h.actions.Get(ctx, consumer)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	consumer, err := h.LoadConsumerById(ctx, id)
-	if errors.Is(err, storage.ErrConsumerNotFound) {
-		opts := []bus.ConsumerOpt{
-			bus.WithId(id),
-			bus.WithSubject(subject),
-			bus.WithBatchSize(batchSize),
-			bus.WithFromEventId(lastEventId),
-		}
-
-		if isDurable {
-			opts = append(opts, bus.WithDurable())
-		}
-
-		if isQueue {
-			opts = append(opts, bus.WithQueue(queueName))
-		}
-
-		consumer, err = bus.NewConsumer(opts...)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		consumer.AckedCount = queueMaxAckedCount
-
-		err = h.CreateConsumer(ctx, consumer)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	defer func() {
-		h.consumersEventMap.Remove(id)
-		// NOTE: queue consumers, should be deleted upon disconnection
-		// there is no need to store them in the database
-		if isQueue || !isDurable {
-			err := h.DeleteConsumer(context.Background(), id)
-			if err != nil {
-				slog.Error("failed to delete consumer", "consumer_id", id, "error", err)
-			}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		err := h.actions.Delete(ctx, id)
+		if err != nil {
+			slog.Error("failed to delete action", "error", err)
 		}
 	}()
 
@@ -291,7 +238,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		sse.WithHeader("Consumer-Subject-Pattern", consumer.Pattern),
 		sse.WithHeader("Consumer-Queue", consumer.QueueName),
 		sse.WithHeader("Consumer-Durable", fmt.Sprintf("%t", consumer.Durable)),
-		sse.WithHeader("Consumer-Auto-Ack", fmt.Sprintf("%t", isAutoAck)),
+		sse.WithHeader("Consumer-Ack-Strategy", ackStrategy),
 	)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -301,15 +248,6 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 
 	var msgsCount int64
 	var prevEventId string
-
-	// push any pending events
-	for _, event := range notAckedEvents {
-		err = h.consumersEventMap.Push(consumer.Id, event)
-		if err != nil {
-			pusher.Push(ctx, "error", err)
-			return
-		}
-	}
 
 	for {
 		select {
@@ -325,7 +263,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 			prevEventId = event.Id
 			if msgsCount%batchSize == 0 {
 				if isAutoAck {
-					err = h.AckEvent(ctx, consumer.Id, prevEventId)
+					err = h.ackAction(ctx, consumer.Id, prevEventId)
 					if err != nil {
 						pusher.Push(ctx, "error", err)
 						return
@@ -336,7 +274,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		case <-time.After(1 * time.Second):
 			if prevEventId != "" {
 				if isAutoAck {
-					err = h.AckEvent(ctx, consumer.Id, prevEventId)
+					err = h.ackAction(ctx, consumer.Id, prevEventId)
 					if err != nil {
 						pusher.Push(ctx, "error", err)
 						return
@@ -365,7 +303,7 @@ func (h *Handler) ackedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.AckEvent(ctx, consumerId, eventId)
+	err := h.ackAction(ctx, consumerId, eventId)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -385,21 +323,13 @@ func (h *Handler) deleteConsumerHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err := h.DeleteConsumer(ctx, consumerId)
+	err := h.deleteAction(ctx, consumerId)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-}
-
-func (h *Handler) notify(consumerId string, event *bus.Event) {
-	slog.Debug("notify", "consumer_id", consumerId, "event_id", event.Id)
-	err := h.consumersEventMap.Push(consumerId, event)
-	if err != nil {
-		slog.Error("failed to notify consumer", "consumer_id", consumerId, "event_id", event.Id, "error", err)
-	}
 }
 
 func (h *Handler) removeExpiredEventsLoop(ctx context.Context, freq time.Duration) {
@@ -412,18 +342,177 @@ func (h *Handler) removeExpiredEventsLoop(ctx context.Context, freq time.Duratio
 			if err != nil {
 				slog.Error("failed to delete expired events", "error", err)
 			}
-		case <-h.closeCh:
+		case <-h.closeSignal:
 			return
 		}
 	}
 }
 
 func (h *Handler) Close() {
-	close(h.closeCh)
+	close(h.closeSignal)
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
+}
+
+// once event gets inserted into the storage, a series of triggers will be executed
+// which populates the consumers_events table with the event that has not been
+// consumed by the consumers yet
+func (h *Handler) putAction(ctx context.Context, event *bus.Event) error {
+	err := h.AppendEvents(ctx, event)
+	if err != nil {
+		return err
+	}
+
+	consumerIds, err := h.LoadConsumerIdsByEventId(ctx, event.Subject)
+	if err != nil {
+		return err
+	}
+
+	// NOTE: try to send the event to the consumers, if the consumer is not ready to receive the event
+	// the event will be dropped, there are other chances to send the event to the consumer
+	for _, consumerId := range consumerIds {
+		h.consumersEventsMap.SendEvent(consumerId, event)
+	}
+
+	return nil
+}
+
+func (h *Handler) getAction(ctx context.Context, consumer *bus.Consumer) (events chan *bus.Event, err error) {
+	_, ok := h.consumersEventsMap.GetConsumer(consumer.Id)
+	if ok {
+		return nil, errors.New("a consumer with the same id already connected")
+	}
+
+	// we need to update the last event id of the consumer
+	// currently, the last event id of consumer contains position
+	consumer.LastEventId, err = h.GetLastEventId(ctx, consumer.LastEventId)
+	if err != nil {
+		return nil, err
+	}
+
+	// NOTE: if queue is not found, create a new queue
+	// this is essential for creating consumer with queue
+	if consumer.QueueName != "" {
+		queue, err := h.LoadQueueByName(ctx, consumer.QueueName)
+		if errors.Is(err, storage.ErrQueueNotFound) {
+			queue = &bus.Queue{
+				Name:        consumer.QueueName,
+				Pattern:     consumer.Pattern,
+				AckStrategy: consumer.AckStrategy,
+				LastEventId: consumer.LastEventId,
+			}
+
+			err = h.CreateQueue(ctx, queue)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		ackedCount, err := h.LoadQueueMaxAckedCount(ctx, consumer.QueueName)
+		if err != nil {
+			return nil, err
+		}
+
+		// NOTE: overriding lastEventId and subject with the queue's info
+		consumer.LastEventId = queue.LastEventId
+		consumer.Pattern = queue.Pattern
+		consumer.AckStrategy = queue.AckStrategy
+		consumer.AckedCount = ackedCount
+	}
+
+	// load/create consumer
+	_, err = h.LoadConsumerById(ctx, consumer.Id)
+	if errors.Is(err, storage.ErrConsumerNotFound) {
+		err = h.CreateConsumer(ctx, consumer)
+		if err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
+
+	events = h.consumersEventsMap.AddConsumer(consumer.Id, consumer.BatchSize)
+
+	// need to call this here before creating the consumer
+	// because once the consumer is created, triggers will start
+	// pumping events to the consumer and it might leads to
+	// pipe is full error
+	notAckedEvents, err := h.LoadNotAckedEvents(ctx, consumer.Id, "")
+	if err != nil {
+		return nil, err
+	}
+
+	// load events from the storage and pre-populate the events channel
+	// with size of the batch size
+	for _, event := range notAckedEvents {
+		events <- event
+	}
+
+	return events, nil
+}
+
+func (h *Handler) ackAction(ctx context.Context, consumerId, eventId string) error {
+	err := h.AckEvent(ctx, consumerId, eventId)
+	if err != nil {
+		return err
+	}
+
+	notAckedEvents, err := h.LoadNotAckedEvents(ctx, consumerId, eventId)
+	if err != nil {
+		return err
+	}
+
+	events, ok := h.consumersEventsMap.GetConsumer(consumerId)
+	if !ok {
+		return errors.New("consumer not found")
+	}
+
+	for _, event := range notAckedEvents {
+		events <- event
+	}
+
+	return nil
+}
+
+func (h *Handler) deleteAction(ctx context.Context, consumerId string) error {
+	err := h.DeleteConsumer(ctx, consumerId)
+	if err != nil {
+		return err
+	}
+
+	h.consumersEventsMap.RemoveConsumer(consumerId)
+
+	return nil
+}
+
+func (h *Handler) processActions() {
+	actions := h.actions.Stream()
+	for {
+		ctx := context.Background()
+
+		select {
+		case <-h.closeSignal:
+			return
+		case action := <-actions:
+			switch action.Type {
+			case PutActionType:
+				action.Error <- h.putAction(ctx, action.Event)
+
+			case GetActionType:
+				events, err := h.getAction(ctx, action.Consumer)
+				action.Events = events
+				action.Error <- err
+
+			case AckActionType:
+				action.Error <- h.ackAction(ctx, action.Consumer.Id, action.EventId)
+
+			case DeleteActionType:
+				action.Error <- h.deleteAction(ctx, action.Consumer.Id)
+			}
+		}
+	}
 }
 
 func New(ctx context.Context, opts ...Opt) (*Handler, error) {
@@ -448,21 +537,13 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 	}
 
 	h := &Handler{
-		consumersEventMap: bus.NewConsumersEventMap(conf.dbPoolSize, 2*time.Second),
-		closeCh:           make(chan struct{}),
+		consumersEventsMap: NewConsumersEventsMap(),
+		actions:            NewActions(conf.workerBufferSize),
 	}
 
-	h.batch = batch.NewSort(conf.batchWindowSize, conf.batchWindowDuration, func(events []*bus.Event) {
-		h.dbw.Submit(func(conn *sqlite.Conn) {
-			ctx := context.Background()
-			err := storage.AppendEvents(ctx, conn, events...)
-			if err != nil {
-				slog.Error("failed to append events", "error", err)
-			}
-		})
-	})
+	go h.processActions()
 
-	db, err := storage.New(ctx, h.notify, conf.dbOpts...)
+	db, err := storage.New(ctx, conf.dbOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -474,7 +555,8 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 	h.mux.HandleFunc("HEAD /", h.ackedHandler)            // HEAD /?consumer_id=123&event_id=456
 	h.mux.HandleFunc("DELETE /", h.deleteConsumerHandler) // DELETE /?consumer_id=123
 
-	go h.removeExpiredEventsLoop(ctx, conf.cleanExpiredEventsFreq)
+	// TODO: fix this
+	// go h.removeExpiredEventsLoop(ctx, conf.cleanExpiredEventsFreq)
 
 	return h, nil
 }

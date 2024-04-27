@@ -18,6 +18,36 @@ var (
 	ErrQueueNotFound    = errors.New("queue not found")
 )
 
+func LoadConsumerIdsByEventId(ctx context.Context, conn *sqlite.Conn, eventId string) ([]string, error) {
+	stmt, err := conn.Prepare(ctx, `
+		SELECT 
+			consumer_id 
+		FROM consumers_events 
+		WHERE event_id = ? AND acked = 0;`, eventId)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Finalize()
+
+	consumerIds := make([]string, 0)
+
+	for {
+		hasRow, err := stmt.Step()
+		if err != nil {
+			return nil, err
+		}
+
+		if !hasRow {
+			break
+		}
+
+		consumerIds = append(consumerIds, stmt.GetText("consumer_id"))
+	}
+
+	return consumerIds, nil
+
+}
+
 func LoadMaxAckedCountQueue(ctx context.Context, conn *sqlite.Conn, queueName string) (int64, error) {
 	stmt, err := conn.Prepare(ctx, `
 		SELECT 
@@ -83,7 +113,7 @@ func SaveQueue(ctx context.Context, conn *sqlite.Conn, queue *bus.Queue) (err er
 	return err
 }
 
-func LoadNotAckedEvents(ctx context.Context, conn *sqlite.Conn, consumerId string) (events []*bus.Event, err error) {
+func LoadNotAckedEvents(ctx context.Context, conn *sqlite.Conn, consumerId string, eventId string) (events []*bus.Event, err error) {
 	stmt, err := conn.Prepare(ctx, `
 		SELECT 
 			events.id AS id, 
@@ -99,9 +129,12 @@ func LoadNotAckedEvents(ctx context.Context, conn *sqlite.Conn, consumerId strin
 			ON events.id = consumers_events.event_id 
 		WHERE 
 			consumers_events.consumer_id = ? 
+			AND consumers_events.event_id > ?
 			AND consumers_events.acked = 0
 		ORDER BY events.id ASC
-		LIMIT 1;`, consumerId)
+		LIMIT (
+			SELECT batch_size FROM consumers WHERE id = ?
+		);`, consumerId, eventId, consumerId)
 	if err != nil {
 		return nil, err
 	}
@@ -197,9 +230,25 @@ func loadConsumer(stmt *sqlite.Stmt) (*bus.Consumer, error) {
 	c.AckedCount = stmt.GetInt64("acked_counts")
 	c.LastEventId = stmt.GetText("last_event_id")
 	c.UpdatedAt = sqlite.LoadTime(stmt, "updated_at")
-	c.ExpiresAt = sqlite.LoadTime(stmt, "expires_in")
 
 	return c, nil
+}
+
+func loadConsumers(stmt *sqlite.Stmt) ([]*bus.Consumer, error) {
+	consumers := make([]*bus.Consumer, 0)
+
+	for {
+		consumer, err := loadConsumer(stmt)
+		if errors.Is(err, ErrConsumerNotFound) {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+
+		consumers = append(consumers, consumer)
+	}
+
+	return consumers, nil
 }
 
 //
@@ -226,8 +275,7 @@ func LoadConsumerById(ctx context.Context, conn *sqlite.Conn, id string) (*bus.C
 				ORDER BY event_id DESC 
 				LIMIT 1
 			) AS last_event_id,
-			consumers.updated_at AS updated_at,
-			consumers.expires_in AS expires_in
+			consumers.updated_at AS updated_at
 		FROM consumers
 		WHERE consumers.id = ?;`, id, id)
 	if err != nil {
@@ -263,11 +311,10 @@ func SaveConsumer(ctx context.Context, conn *sqlite.Conn, c *bus.Consumer) (err 
 				batch_size,
 				acked_counts,
 				last_event_id,
-				updated_at,
-				expires_in
+				updated_at
 			) 
 		VALUES 
-			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO NOTHING;`,
 		c.Id,
 		c.Pattern,
@@ -278,7 +325,6 @@ func SaveConsumer(ctx context.Context, conn *sqlite.Conn, c *bus.Consumer) (err 
 		c.AckedCount,
 		lastEventId,
 		c.UpdatedAt,
-		c.ExpiresAt,
 	)
 	if err != nil {
 		return err
@@ -333,6 +379,8 @@ func AppendEvents(ctx context.Context, conn *sqlite.Conn, events ...*bus.Event) 
 	VALUES `)
 
 	sqlite.GroupPlaceholdersStringBuilder(len(events), numFields, &sb)
+
+	sb.WriteString(";")
 
 	args := make([]any, 0, len(events)*numFields)
 	for _, event := range events {
@@ -396,7 +444,10 @@ func AckEvent(ctx context.Context, conn *sqlite.Conn, consumerId, eventId string
 	SET
 		acked = 1
 	WHERE
-		consumer_id = ? AND event_id <= ?;
+		consumer_id = ? 
+		AND event_id <= ? 
+		AND acked = 0
+	;
 	`, consumerId, eventId)
 	if err != nil {
 		return err

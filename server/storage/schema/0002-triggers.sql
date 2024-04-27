@@ -1,37 +1,4 @@
 --
--- Trigger notify function when a new record is inserted into 
--- consumers_events with acked = 0
---
--- NOTE: This trigger runs for both non-queue and queue consumers
---
-CREATE TRIGGER IF NOT EXISTS trigger_consumers_events_notify
---
-AFTER INSERT ON consumers_events
---
-FOR EACH ROW WHEN NEW.acked = 0
---
-BEGIN
---
-SELECT
-    notify (
-        id,
-        subject,
-        reply,
-        reply_count,
-        size,
-        data,
-        created_at,
-        expires_at,
-        NEW.consumer_id
-    )
-FROM
-    events
-WHERE
-    id = NEW.event_id;
-
-END;
-
---
 -- INSERT relevant events based on pattern of consumer
 -- and last_event_id and LIMIT it based on batch size
 -- if and only if batch_size > count of not events that not acked
@@ -211,34 +178,24 @@ WHERE
 
 END;
 
+CREATE TRIGGER IF NOT EXISTS trigger_consumers_events_cleanup AFTER
+UPDATE OF deleted ON consumers_events WHEN NEW.deleted = 1 BEGIN
+DELETE FROM consumers_events
+WHERE
+    consumer_id = NEW.consumer_id
+    AND event_id <= NEW.event_id
+    AND deleted = 1;
+
+END;
+
 --
 -- NOTE: This Trigger only runs for non-queue consumers
 --
-CREATE TRIGGER IF NOT EXISTS trigger_consumers_events_acked
+CREATE TRIGGER IF NOT EXISTS trigger_consumers_events_acked AFTER
+UPDATE OF acked ON consumers_events FOR EACH ROW WHEN NEW.acked = 1
+AND NEW.deleted = 0 BEGIN
 --
-AFTER
-UPDATE OF acked ON consumers_events WHEN NEW.acked = 1
-AND NEW.event_id > (
-    -- Get the last event_id of the consumer that has been acked
-    -- since the update can be executed in batch
-    SELECT
-        COALESCE(last_event_id, '') AS last_event_id
-    FROM
-        consumers
-    WHERE
-        id = NEW.consumer_id
-)
-AND NOT EXISTS (
-    SELECT
-        1
-    FROM
-        consumers
-    WHERE
-        id = NEW.consumer_id
-        AND queue_name IS NOT NULL
-)
 --
-BEGIN
 --
 UPDATE consumers
 SET
@@ -247,27 +204,18 @@ SET
 WHERE
     id = NEW.consumer_id;
 
--- Because consumers_events is getting bigger and bigger
--- we need to delete the old events that has been acked
--- and keep the latest one, 
--- However, calling delete will cause the trigger to be called again
--- So at the beginning of the trigger, we need to check if the new event
--- is bigger than the last_event_id of the consumer, if not, it means that tigger
--- should not be called
-DELETE FROM consumers_events
+--
+--
+--
+UPDATE consumers_events
+SET
+    deleted = 1
 WHERE
     consumer_id = NEW.consumer_id
-    AND acked = 1
-    AND rowid NOT IN (
-        SELECT
-            MAX(rowid)
-        FROM
-            consumers_events
-        WHERE
-            consumer_id = NEW.consumer_id
-            AND acked = 1
-    );
+    AND event_id = NEW.event_id;
 
+--
+--
 --
 INSERT INTO
     consumers_events (consumer_id, event_id)
@@ -277,7 +225,18 @@ SELECT
 FROM
     events
 WHERE
-    events.id > NEW.event_id
+    events.id > (
+        SELECT
+            event_id
+        FROM
+            consumers_events
+        WHERE
+            consumer_id = NEW.consumer_id
+        ORDER BY
+            event_id DESC
+        LIMIT
+            1
+    )
     AND events.subject LIKE (
         SELECT
             pattern
@@ -293,7 +252,7 @@ WHERE
             consumers_events
         WHERE
             consumer_id = NEW.consumer_id
-            AND acked = 0
+            AND deleted = 0
     ) < (
         SELECT
             batch_size
@@ -310,6 +269,14 @@ LIMIT
             consumers
         WHERE
             id = NEW.consumer_id
+    ) - (
+        SELECT
+            COUNT(*)
+        FROM
+            consumers_events
+        WHERE
+            consumer_id = NEW.consumer_id
+            AND deleted = 0
     );
 
 END;

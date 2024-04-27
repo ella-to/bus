@@ -9,6 +9,13 @@ import (
 	"ella.to/sqlite"
 )
 
+func (h *Handler) LoadConsumerIdsByEventId(ctx context.Context, eventId string) (consumerIds []string, err error) {
+	h.dbw.Submit(func(conn *sqlite.Conn) {
+		consumerIds, err = storage.LoadConsumerIdsByEventId(ctx, conn, eventId)
+	})
+	return
+}
+
 func (h *Handler) LoadQueueMaxAckedCount(ctx context.Context, queueName string) (ackedCount int64, err error) {
 	h.dbw.Submit(func(conn *sqlite.Conn) {
 		ackedCount, err = storage.LoadMaxAckedCountQueue(ctx, conn, queueName)
@@ -32,15 +39,17 @@ func (h *Handler) CreateQueue(ctx context.Context, queue *bus.Queue) (err error)
 
 }
 
-func (h *Handler) LoadNotAckedEvents(ctx context.Context, consumerId string) (events []*bus.Event, err error) {
+func (h *Handler) LoadNotAckedEvents(ctx context.Context, consumerId string, eventId string) (events []*bus.Event, err error) {
 	h.dbw.Submit(func(conn *sqlite.Conn) {
-		events, err = storage.LoadNotAckedEvents(ctx, conn, consumerId)
+		events, err = storage.LoadNotAckedEvents(ctx, conn, consumerId, eventId)
 	})
 	return
 }
 
 func (h *Handler) AppendEvents(ctx context.Context, event *bus.Event) (err error) {
-	h.batch.Add(event)
+	h.dbw.Submit(func(conn *sqlite.Conn) {
+		err = storage.AppendEvents(ctx, conn, event)
+	})
 	return
 }
 
@@ -48,7 +57,6 @@ func (h *Handler) DeleteConsumer(ctx context.Context, id string) (err error) {
 	h.dbw.Submit(func(conn *sqlite.Conn) {
 		err = storage.DeleteConsumer(ctx, conn, id)
 	})
-
 	return
 }
 

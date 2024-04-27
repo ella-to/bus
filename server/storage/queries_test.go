@@ -2,87 +2,48 @@ package storage_test
 
 import (
 	"context"
-	"log"
-	"log/slog"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-
 	"ella.to/bus"
 	"ella.to/bus/server/storage"
-	"ella.to/sqlite"
+	"github.com/stretchr/testify/assert"
 )
-
-func storageSetup(ctx context.Context, notify storage.NotifyFunc, t *testing.T, path string) *sqlite.Database {
-	slog.SetLogLoggerLevel(slog.LevelDebug)
-
-	dbOpts := []sqlite.OptionFunc{
-		sqlite.WithPoolSize(1),
-	}
-
-	if path != "" {
-		dbOpts = append(dbOpts, sqlite.WithFile(path))
-		t.Cleanup(func() {
-			os.Remove(path)
-		})
-	} else {
-		dbOpts = append(dbOpts, sqlite.WithMemory())
-	}
-
-	db, err := storage.New(ctx, notify, dbOpts...)
-	assert.NoError(t, err)
-
-	err = sqlite.Migration(context.TODO(), db, storage.MigrationFiles, "schema")
-	assert.NoError(t, err)
-
-	return db
-}
-
-func TestSaveConsumer(t *testing.T) {
-	ctx := context.TODO()
-	notify := storage.NotifyFunc(func(consumerId string, event *bus.Event) {
-		log.Printf("consumerId: %s, event: %v", consumerId, event)
-	})
-
-	db := storageSetup(ctx, notify, t, "")
-	defer db.Close()
-
-	conn, err := db.Conn(ctx)
-	assert.NoError(t, err)
-	defer conn.Close()
-
-	c, err := bus.NewConsumer(
-		bus.WithSubject("a.b.c"),
-		bus.WithDurable(),
-	)
-	assert.NoError(t, err)
-
-	err = storage.SaveConsumer(ctx, conn, c)
-	assert.NoError(t, err)
-}
 
 func TestAppendEvents(t *testing.T) {
 	ctx := context.TODO()
-	notify := storage.NotifyFunc(func(consumerId string, event *bus.Event) {
-		log.Printf("consumerId: %s, event: %v", consumerId, event)
-	})
 
-	db := storageSetup(ctx, notify, t, "")
-	defer db.Close()
+	db := createTestStorage(t, "")
 
 	conn, err := db.Conn(ctx)
 	assert.NoError(t, err)
 	defer conn.Close()
 
-	evt, err := bus.NewEvent(
-		bus.WithSubject("subject"),
-		bus.WithData([]byte(`{"key": "value"}`)),
-		bus.WithExpiresAt(time.Hour),
+	consumer, err := bus.NewConsumer(
+		bus.WithId("consumer-1"),
+		bus.WithBatchSize(1),
+		bus.WithSubject("a.b.*"),
 	)
 	assert.NoError(t, err)
 
-	err = storage.AppendEvents(ctx, conn, evt)
+	err = storage.SaveConsumer(ctx, conn, consumer)
 	assert.NoError(t, err)
+
+	now := time.Now().Add(1 * time.Hour)
+
+	err = storage.AppendEvents(ctx, conn, &bus.Event{
+		Id:        "event-1",
+		Subject:   "a.b.c",
+		Size:      4,
+		Data:      []byte("data"),
+		ExpiresAt: &now,
+	})
+	assert.NoError(t, err)
+
+	time.Sleep(1 * time.Second)
+
+	consumerIds, err := storage.LoadConsumerIdsByEventId(ctx, conn, "event-1")
+	assert.NoError(t, err)
+
+	assert.Equal(t, []string{"consumer-1"}, consumerIds)
 }

@@ -236,7 +236,6 @@ type Consumer struct {
 	AckedCount  int64     `json:"acked_count"`
 	LastEventId string    `json:"last_event_id"`
 	UpdatedAt   time.Time `json:"updated_at"`
-	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 func NewConsumer(opts ...ConsumerOpt) (*Consumer, error) {

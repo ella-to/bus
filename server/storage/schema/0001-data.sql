@@ -51,7 +51,6 @@ CREATE TABLE
         acked_counts INTEGER NOT NULL DEFAULT 0,
         last_event_id TEXT,
         updated_at INTEGER NOT NULL,
-        expires_in INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (queue_name) REFERENCES queues (name) ON DELETE CASCADE,
         FOREIGN KEY (last_event_id) REFERENCES events (id) ON DELETE SET NULL,
         PRIMARY KEY (id)
@@ -63,8 +62,6 @@ CREATE INDEX IF NOT EXISTS consumers_queue_name ON consumers (queue_name);
 
 CREATE INDEX IF NOT EXISTS consumers_last_event_id ON consumers (last_event_id);
 
-CREATE INDEX IF NOT EXISTS consumers_expires_in ON consumers (expires_in);
-
 --
 -- CONSUMERS_EVENTS
 --
@@ -73,6 +70,7 @@ CREATE TABLE
         consumer_id TEXT,
         event_id TEXT NOT NULL,
         acked INTEGER NOT NULL DEFAULT 0,
+        deleted INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE,
         FOREIGN KEY (consumer_id) REFERENCES consumers (id) ON DELETE CASCADE
     );
