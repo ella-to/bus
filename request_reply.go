@@ -28,7 +28,7 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 			return resp, err
 		}
 
-		for evt, err := range stream.Get(
+		for msgs, err := range stream.Get(
 			ctx,
 			WithSubject(evt.Reply),
 			WithFromOldest(),
@@ -36,6 +36,12 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 			if err != nil {
 				return resp, err
 			}
+
+			if len(msgs.Events) != 1 {
+				return resp, fmt.Errorf("expected one event")
+			}
+
+			evt := msgs.Events[0]
 
 			replyMsg := struct {
 				Type    string          `json:"type"`
@@ -70,7 +76,7 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 
 func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn RequestReplyFunc[Req, Resp]) {
 	queueName := fmt.Sprintf("queue.%s", subject)
-	events := stream.Get(
+	msgs := stream.Get(
 		ctx,
 		WithSubject(subject),
 		WithFromNewest(),
@@ -79,12 +85,19 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 	)
 
 	go func() {
-		for evt, err := range events {
+		for msg, err := range msgs {
 			if err != nil {
 				return
 			}
 
-			req, err := jsonUnmarshal[Req](evt.Data)
+			if len(msg.Events) != 1 {
+				slog.Error("expected one event", "events", len(msg.Events))
+				continue
+			}
+
+			event := msg.Events[0]
+
+			req, err := jsonUnmarshal[Req](event.Data)
 			if err != nil {
 				return
 			}
@@ -103,7 +116,7 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 				replyMsg.Payload = resp
 			}
 
-			replyEvent, err := NewEvent(WithSubject(evt.Reply), WithJsonData(replyMsg), WithExpiresAt(30*time.Second))
+			replyEvent, err := NewEvent(WithSubject(event.Reply), WithJsonData(replyMsg), WithExpiresAt(30*time.Second))
 			if err != nil {
 				return
 			}
@@ -113,7 +126,7 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 				return
 			}
 
-			err = evt.Ack(ctx)
+			err = msg.Ack(ctx)
 			if err != nil {
 				slog.Error("failed to acked event", "error", err)
 			}

@@ -32,35 +32,9 @@ func TestBasicServer(t *testing.T) {
 	client, err := client.New(client.WithAddr(server.URL))
 	assert.NoError(t, err)
 
-	{
-		evt, err := bus.NewEvent(
-			bus.WithSubject("a.b.1"),
-			bus.WithJsonData(struct {
-				Name string `json:"name"`
-			}{
-				Name: "John",
-			}),
-		)
-		assert.NoError(t, err)
-		err = client.Put(ctx, evt)
-		assert.NoError(t, err)
-	}
+	eventsCount := 100
 
-	{
-		evt, err := bus.NewEvent(
-			bus.WithSubject("a.b.1"),
-			bus.WithJsonData(struct {
-				Name string `json:"name"`
-			}{
-				Name: "John",
-			}),
-		)
-		assert.NoError(t, err)
-		err = client.Put(ctx, evt)
-		assert.NoError(t, err)
-	}
-
-	{
+	for range eventsCount {
 		evt, err := bus.NewEvent(
 			bus.WithSubject("a.b.1"),
 			bus.WithJsonData(struct {
@@ -76,28 +50,25 @@ func TestBasicServer(t *testing.T) {
 
 	//
 
-	events := client.Get(
+	msgs := client.Get(
 		ctx,
 
 		bus.WithSubject("a.b.*"),
 		bus.WithFromOldest(),
-		// bus.WithManualAck(),
-		bus.WithBatchSize(2),
+		bus.WithManualAck(),
+		bus.WithBatchSize(4),
 	)
 
 	count := 0
-	for evt, err := range events {
-		count++
-
+	for msg, err := range msgs {
 		assert.NoError(t, err)
-		assert.Equal(t, "a.b.1", evt.Subject)
-		fmt.Println(evt.Id)
-		err = evt.Ack(ctx)
-		assert.NoError(t, err)
-
-		if count == 4 {
+		count += len(msg.Events)
+		if count == eventsCount {
 			break
 		}
+
+		err = msg.Ack(ctx)
+		assert.NoError(t, err)
 	}
 
 	fmt.Println("done")

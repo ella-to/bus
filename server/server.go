@@ -214,7 +214,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 
 	consumer.UpdatedAt = time.Now()
 
-	events, err := h.actions.Get(ctx, consumer)
+	batch, err := h.actions.Get(ctx, consumer)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -246,43 +246,76 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer pusher.Done(ctx)
 
-	var msgsCount int64
-	var prevEventId string
+	var lastEventId string
 
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case event, ok := <-events:
-			if !ok {
-				return
-			}
-			pusher.Push(ctx, "event", event)
-			msgsCount++
+		// This is a basic optimization, if the consumer is auto ack
+		// then we do couple of extra select operations
+		// if the consumer is manual ack, then we just wait for the batch and context.Done
+		if isAutoAck {
+			if lastEventId != "" {
+				select {
+				case <-ctx.Done():
+					return
+				case events, ok := <-batch:
+					if !ok {
+						return
+					}
+					pusher.Push(ctx, "event", events)
 
-			prevEventId = event.Id
-			if msgsCount%batchSize == 0 {
-				if isAutoAck {
-					err = h.ackAction(ctx, consumer.Id, prevEventId)
-					if err != nil {
-						pusher.Push(ctx, "error", err)
-						return
+					lastEventId = events[len(events)-1].Id
+					if isAutoAck {
+						err = h.ackAction(ctx, consumer.Id, lastEventId)
+						if err != nil {
+							pusher.Push(ctx, "error", err)
+							return
+						}
+						lastEventId = ""
+					}
+
+				case <-time.After(1 * time.Second):
+					if isAutoAck && lastEventId != "" {
+						err = h.ackAction(ctx, consumer.Id, lastEventId)
+						if err != nil {
+							pusher.Push(ctx, "error", err)
+							return
+						}
+						lastEventId = ""
 					}
 				}
-				prevEventId = ""
+			} else {
+				select {
+				case <-ctx.Done():
+					return
+				case events, ok := <-batch:
+					if !ok {
+						return
+					}
+					pusher.Push(ctx, "event", events)
+
+					lastEventId = events[len(events)-1].Id
+					if isAutoAck {
+						err = h.ackAction(ctx, consumer.Id, lastEventId)
+						if err != nil {
+							pusher.Push(ctx, "error", err)
+							return
+						}
+						lastEventId = ""
+					}
+				}
 			}
-		case <-time.After(1 * time.Second):
-			if prevEventId != "" {
-				if isAutoAck {
-					err = h.ackAction(ctx, consumer.Id, prevEventId)
-					if err != nil {
-						pusher.Push(ctx, "error", err)
-						return
-					}
+		} else {
+			select {
+			case <-ctx.Done():
+				return
+			case events, ok := <-batch:
+				if !ok {
+					return
 				}
-				prevEventId = ""
+				pusher.Push(ctx, "event", events)
 			}
 		}
+
 	}
 }
 
@@ -373,13 +406,15 @@ func (h *Handler) putAction(ctx context.Context, event *bus.Event) error {
 	// NOTE: try to send the event to the consumers, if the consumer is not ready to receive the event
 	// the event will be dropped, there are other chances to send the event to the consumer
 	for _, consumerId := range consumerIds {
-		h.consumersEventsMap.SendEvent(consumerId, event)
+		h.consumersEventsMap.SendEvent(consumerId, []*bus.Event{event})
 	}
 
 	return nil
 }
 
-func (h *Handler) getAction(ctx context.Context, consumer *bus.Consumer) (events chan *bus.Event, err error) {
+func (h *Handler) getAction(ctx context.Context, consumer *bus.Consumer) (chan []*bus.Event, error) {
+	var err error
+
 	_, ok := h.consumersEventsMap.GetConsumer(consumer.Id)
 	if ok {
 		return nil, errors.New("a consumer with the same id already connected")
@@ -433,7 +468,7 @@ func (h *Handler) getAction(ctx context.Context, consumer *bus.Consumer) (events
 		return nil, err
 	}
 
-	events = h.consumersEventsMap.AddConsumer(consumer.Id, consumer.BatchSize)
+	batch := h.consumersEventsMap.AddConsumer(consumer.Id, consumer.BatchSize)
 
 	// need to call this here before creating the consumer
 	// because once the consumer is created, triggers will start
@@ -446,11 +481,11 @@ func (h *Handler) getAction(ctx context.Context, consumer *bus.Consumer) (events
 
 	// load events from the storage and pre-populate the events channel
 	// with size of the batch size
-	for _, event := range notAckedEvents {
-		events <- event
+	if len(notAckedEvents) > 0 {
+		batch <- notAckedEvents
 	}
 
-	return events, nil
+	return batch, nil
 }
 
 func (h *Handler) ackAction(ctx context.Context, consumerId, eventId string) error {
@@ -464,14 +499,16 @@ func (h *Handler) ackAction(ctx context.Context, consumerId, eventId string) err
 		return err
 	}
 
-	events, ok := h.consumersEventsMap.GetConsumer(consumerId)
+	if len(notAckedEvents) == 0 {
+		return nil
+	}
+
+	batch, ok := h.consumersEventsMap.GetConsumer(consumerId)
 	if !ok {
 		return errors.New("consumer not found")
 	}
 
-	for _, event := range notAckedEvents {
-		events <- event
-	}
+	batch <- notAckedEvents
 
 	return nil
 }

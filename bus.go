@@ -44,6 +44,16 @@ func (opt eventOptFn) configureEvent(opts *Event) error {
 	return opt(opts)
 }
 
+type MsgOpt interface {
+	configureMsg(*Msg) error
+}
+
+type msgOptFn func(opts *Msg) error
+
+func (opt msgOptFn) configureMsg(opts *Msg) error {
+	return opt(opts)
+}
+
 type ConsumerOpt interface {
 	configureConsumer(*Consumer) error
 }
@@ -167,11 +177,15 @@ func WithConfirm(n int64) EventOpt {
 	})
 }
 
-// AttachEventMetaData is used to set the consumerId and acker for an event
-// NOTE: Don't call this directly, this is used internally by the library
-func AttachEventMetaData(evt *Event, consumerId string, acker Acker) {
-	evt.consumerId = consumerId
-	evt.acker = acker
+// WithInitAck is an option to initialize the acker for the events
+// NOTE: This option is only used for the client and should not be used
+// directly by the user
+func WithInitAck(consumerId string, acker Acker) MsgOpt {
+	return msgOptFn(func(m *Msg) error {
+		m.consumerId = consumerId
+		m.acker = acker
+		return nil
+	})
 }
 
 //
@@ -187,17 +201,6 @@ type Event struct {
 	Data       json.RawMessage `json:"data"`
 	CreatedAt  time.Time       `json:"created_at"`
 	ExpiresAt  *time.Time      `json:"expires_at,omitempty"`
-
-	consumerId string
-	acker      Acker
-}
-
-func (evt *Event) Ack(ctx context.Context) error {
-	if evt.acker == nil {
-		return nil
-	}
-
-	return evt.acker.Ack(ctx, evt.consumerId, evt.Id)
 }
 
 func NewEvent(opts ...EventOpt) (*Event, error) {
@@ -211,6 +214,35 @@ func NewEvent(opts ...EventOpt) (*Event, error) {
 	}
 
 	return evt, nil
+}
+
+type Msg struct {
+	Events []*Event
+
+	consumerId string
+	acker      Acker
+}
+
+func (m *Msg) Ack(ctx context.Context) error {
+	if m.acker == nil || len(m.Events) == 0 {
+		return nil
+	}
+
+	return m.acker.Ack(ctx, m.consumerId, m.Events[len(m.Events)-1].Id)
+}
+
+func NewMsg(events []*Event, opts ...MsgOpt) (*Msg, error) {
+	msg := &Msg{
+		Events: events,
+	}
+
+	for _, opt := range opts {
+		if err := opt.configureMsg(msg); err != nil {
+			return nil, err
+		}
+	}
+
+	return msg, nil
 }
 
 //
@@ -329,7 +361,7 @@ type Putter interface {
 }
 
 type Getter interface {
-	Get(ctx context.Context, opts ...ConsumerOpt) iter.Seq2[*Event, error]
+	Get(ctx context.Context, opts ...ConsumerOpt) iter.Seq2[*Msg, error]
 }
 
 type Acker interface {

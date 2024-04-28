@@ -22,7 +22,7 @@ type Action struct {
 	Consumer *bus.Consumer
 	EventId  string
 	Error    chan error
-	Events   <-chan *bus.Event
+	Events   <-chan []*bus.Event
 
 	retrunCh chan *Action
 }
@@ -116,7 +116,7 @@ func (a *Actions) Put(ctx context.Context, event *bus.Event) error {
 	return <-action.Error
 }
 
-func (a *Actions) Get(ctx context.Context, consumer *bus.Consumer) (<-chan *bus.Event, error) {
+func (a *Actions) Get(ctx context.Context, consumer *bus.Consumer) (<-chan []*bus.Event, error) {
 	action, err := a.grab(ctx)
 	if err != nil {
 		return nil, err

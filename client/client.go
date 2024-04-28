@@ -108,7 +108,7 @@ func (c *Client) Put(ctx context.Context, evt *bus.Event) error {
 	return nil
 }
 
-func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.Seq2[*bus.Event, error] {
+func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.Seq2[*bus.Msg, error] {
 	consumer, err := bus.NewConsumer(consumerOpts...)
 	if err != nil {
 		return newIterErr(err)
@@ -161,42 +161,59 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 
 	ctx, cancel := context.WithCancel(ctx)
 
-	msgs := sse.Receive(ctx, resp.Body)
+	incomings := sse.Receive(ctx, resp.Body)
 
-	return func(yield func(*bus.Event, error) bool) {
+	return func(yield func(*bus.Msg, error) bool) {
 		defer func() {
 			cancel()
 		}()
 
-		for msg := range msgs {
+		for incoming := range incomings {
 			var err error
-			var evt *bus.Event
+			var msg *bus.Msg
+			var events []*bus.Event
 
-			switch msg.Event {
+			switch incoming.Event {
 			case "event":
-				evt = &bus.Event{}
-				err = json.Unmarshal(msg.Data, evt)
-
-				if err == nil && !isAutoAck {
-					bus.AttachEventMetaData(evt, consumer.Id, c)
+				err = json.Unmarshal(incoming.Data, &events)
+				if err != nil {
+					return
 				}
 
-				if err == nil && evt.ReplyCount > 0 {
-					confirmEvent, err := bus.NewEvent(bus.WithSubject(evt.Reply), bus.WithData([]byte(`{"type":"confirm"}`)))
+				if !isAutoAck {
+					msg, err = bus.NewMsg(events, bus.WithInitAck(consumer.Id, c))
 					if err != nil {
 						return
 					}
-					err = c.Put(ctx, confirmEvent)
+				} else {
+					msg, err = bus.NewMsg(events)
+					if err != nil {
+						return
+					}
+				}
+
+				for _, evt := range events {
+					if evt.ReplyCount > 0 {
+						confirmEvent, err := bus.NewEvent(bus.WithSubject(evt.Reply), bus.WithData([]byte(`{"type":"confirm"}`)))
+						if err != nil {
+							return
+						}
+						err = c.Put(ctx, confirmEvent)
+						if err != nil {
+							return
+						}
+					}
 				}
 
 			case "error":
-				evt = nil
-				err = fmt.Errorf("%s", msg.Data)
+				events = nil
+				msg = nil
+				err = fmt.Errorf("%s", incoming.Data)
 			case "done":
 				return
 			}
 
-			if !yield(evt, err) {
+			if !yield(msg, err) {
 				break
 			}
 		}
@@ -281,8 +298,8 @@ func New(opts ...ClientOpt) (*Client, error) {
 	return c, nil
 }
 
-func newIterErr(err error) iter.Seq2[*bus.Event, error] {
-	return func(yield func(*bus.Event, error) bool) {
+func newIterErr(err error) iter.Seq2[*bus.Msg, error] {
+	return func(yield func(*bus.Msg, error) bool) {
 		yield(nil, err)
 	}
 }
