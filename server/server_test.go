@@ -92,7 +92,7 @@ func TestBasicServer(t *testing.T) {
 }
 
 func TestQueue(t *testing.T) {
-	client := setupBusServer(t, "./test.db")
+	client := setupBusServer(t, "")
 
 	ctx := context.TODO()
 

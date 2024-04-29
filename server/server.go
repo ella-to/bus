@@ -251,7 +251,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 
 					lastEventId = events[len(events)-1].Id
 					if isAutoAck {
-						err = h.ackAction(ctx, consumer.Id, lastEventId)
+						err = h.actions.Ack(ctx, consumer.Id, lastEventId)
 						if err != nil {
 							pusher.Push(ctx, "error", err)
 							return
@@ -261,7 +261,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 
 				case <-time.After(1 * time.Second):
 					if isAutoAck && lastEventId != "" {
-						err = h.ackAction(ctx, consumer.Id, lastEventId)
+						err = h.actions.Ack(ctx, consumer.Id, lastEventId)
 						if err != nil {
 							pusher.Push(ctx, "error", err)
 							return
@@ -281,7 +281,7 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 
 					lastEventId = events[len(events)-1].Id
 					if isAutoAck {
-						err = h.ackAction(ctx, consumer.Id, lastEventId)
+						err = h.actions.Ack(ctx, consumer.Id, lastEventId)
 						if err != nil {
 							pusher.Push(ctx, "error", err)
 							return
@@ -322,7 +322,7 @@ func (h *Handler) ackedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.ackAction(ctx, consumerId, eventId)
+	err := h.actions.Ack(ctx, consumerId, eventId)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -342,7 +342,7 @@ func (h *Handler) deleteConsumerHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err := h.deleteAction(ctx, consumerId)
+	err := h.actions.Delete(ctx, consumerId)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -379,7 +379,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // which populates the consumers_events table with the event that has not been
 // consumed by the consumers yet
 func (h *Handler) putAction(ctx context.Context, event *bus.Event) error {
-	fmt.Println("#### PUT ACTION")
 	err := h.AppendEvents(ctx, event)
 	if err != nil {
 		return err
@@ -400,7 +399,6 @@ func (h *Handler) putAction(ctx context.Context, event *bus.Event) error {
 }
 
 func (h *Handler) getAction(ctx context.Context, consumer *bus.Consumer) (chan []*bus.Event, error) {
-	fmt.Println("#### GET ACTION")
 	var err error
 
 	_, ok := h.consumersEventsMap.GetConsumer(consumer.Id)
@@ -477,7 +475,6 @@ func (h *Handler) getAction(ctx context.Context, consumer *bus.Consumer) (chan [
 }
 
 func (h *Handler) ackAction(ctx context.Context, consumerId, eventId string) error {
-	fmt.Println("#### ACK ACTION")
 	err := h.AckEvent(ctx, consumerId, eventId)
 	if err != nil {
 		return err
@@ -510,7 +507,6 @@ func (h *Handler) ackAction(ctx context.Context, consumerId, eventId string) err
 }
 
 func (h *Handler) deleteAction(ctx context.Context, consumerId string) error {
-	fmt.Println("#### DELETE ACTION")
 	err := h.DeleteConsumer(ctx, consumerId)
 	if err != nil {
 		return err
@@ -525,7 +521,6 @@ func (h *Handler) processActions() {
 	actions := h.actions.Stream()
 	for {
 		ctx := context.Background()
-		fmt.Println("#### PROCESS ACTIONS")
 
 		select {
 		case <-h.closeSignal:

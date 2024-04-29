@@ -20,7 +20,7 @@ func setupBusServer(t *testing.T) *client.Client {
 		context.TODO(),
 
 		server.WithStoragePoolSize(10),
-		server.WithStoragePath("./bus.db"),
+		// server.WithStoragePath("./bus.db"),
 	)
 	assert.NoError(t, err)
 
