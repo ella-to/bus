@@ -224,7 +224,7 @@ func (c *Client) Ack(ctx context.Context, consumerId, eventId string) error {
 	var url strings.Builder
 
 	url.WriteString(c.addr)
-	url.WriteString("/ack?")
+	url.WriteString("/?")
 	url.WriteString("event_id=")
 	url.WriteString(eventId)
 	url.WriteString("&consumer_id=")
