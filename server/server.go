@@ -441,6 +441,7 @@ func (h *Handler) getAction(ctx context.Context, consumer *bus.Consumer) (chan [
 		consumer.Pattern = queue.Pattern
 		consumer.AckStrategy = queue.AckStrategy
 		consumer.AckedCount = ackedCount
+		consumer.Durable = false
 	}
 
 	// load/create consumer
@@ -578,10 +579,10 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 
 	h.dbw = sqlite.NewWorker(db, int64(conf.workerBufferSize), int64(conf.dbPoolSize))
 
-	h.mux.HandleFunc("POST /", h.publishHandler)          // POST /
-	h.mux.HandleFunc("GET /", h.consumerHandler)          // GET /?subject=foo&durable&queue=bar&pos=oldest|newest|<event_id>&id=123&auto_ack
-	h.mux.HandleFunc("HEAD /", h.ackedHandler)            // HEAD /?consumer_id=123&event_id=456
-	h.mux.HandleFunc("DELETE /", h.deleteConsumerHandler) // DELETE /?consumer_id=123
+	h.mux.HandleFunc("POST /put", h.publishHandler)          // POST /put
+	h.mux.HandleFunc("GET /get", h.consumerHandler)          // GET /get?subject=foo&durable&queue=bar&pos=oldest|newest|<event_id>&id=123&auto_ack
+	h.mux.HandleFunc("GET /ack", h.ackedHandler)             // GET /ack?consumer_id=123&event_id=456
+	h.mux.HandleFunc("GET /delete", h.deleteConsumerHandler) // GET /delete?consumer_id=123
 
 	go h.removeExpiredEventsLoop(ctx, conf.cleanExpiredEventsFreq)
 

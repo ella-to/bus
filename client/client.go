@@ -67,7 +67,7 @@ func (c *Client) Put(ctx context.Context, evt *bus.Event) error {
 		}
 	}()
 
-	url := c.addr + "/"
+	url := c.addr + "/put"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, pr)
 	if err != nil {
@@ -132,8 +132,11 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 	if consumer.BatchSize > 0 {
 		qs.Set("batch_size", fmt.Sprintf("%d", consumer.BatchSize))
 	}
+	if consumer.Durable {
+		qs.Set("durable", "true")
+	}
 
-	url := c.addr + "/?" + qs.Encode()
+	url := c.addr + "/get?" + qs.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -224,13 +227,13 @@ func (c *Client) Ack(ctx context.Context, consumerId, eventId string) error {
 	var url strings.Builder
 
 	url.WriteString(c.addr)
-	url.WriteString("/?")
+	url.WriteString("/ack?")
 	url.WriteString("event_id=")
 	url.WriteString(eventId)
 	url.WriteString("&consumer_id=")
 	url.WriteString(consumerId)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url.String(), nil)
 	if err != nil {
 		return err
 	}
@@ -257,10 +260,10 @@ func (c *Client) Close(ctx context.Context, consumerId string) error {
 	var url strings.Builder
 
 	url.WriteString(c.addr)
-	url.WriteString("/?consumer_id=")
+	url.WriteString("/delete?consumer_id=")
 	url.WriteString(consumerId)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url.String(), nil)
 	if err != nil {
 		return err
 	}
