@@ -50,10 +50,11 @@ FOR EACH ROW WHEN NEW.queue_name IS NOT NULL
 BEGIN
 --
 INSERT INTO
-    consumers_events (consumer_id, event_id)
+    consumers_events (consumer_id, event_id, queued)
 SELECT
     NEW.id as consumer_id,
-    id as event_id
+    id as event_id,
+    1 as queued
 FROM
     events
 WHERE
@@ -140,10 +141,11 @@ FOR EACH ROW
 BEGIN
 --
 INSERT INTO
-    consumers_events (consumer_id, event_id)
+    consumers_events (consumer_id, event_id, queued)
 SELECT
     consumers.id as consumer_id,
-    NEW.id as event_id
+    NEW.id as event_id,
+    1 as queued
 FROM
     consumers
 WHERE
@@ -178,6 +180,9 @@ WHERE
 
 END;
 
+--
+-- NOTE: this trigger runs for both queue and non-queue consumers
+--
 CREATE TRIGGER IF NOT EXISTS trigger_consumers_events_cleanup AFTER
 UPDATE OF deleted ON consumers_events WHEN NEW.deleted = 1 BEGIN
 DELETE FROM consumers_events
@@ -193,9 +198,10 @@ END;
 --
 CREATE TRIGGER IF NOT EXISTS trigger_consumers_events_acked AFTER
 UPDATE OF acked ON consumers_events FOR EACH ROW WHEN NEW.acked = 1
-AND NEW.deleted = 0 BEGIN
+AND NEW.deleted = 0
+AND NEW.queued = 0 BEGIN
 --
---
+-- updating consumer's last_event_id and acked_counts
 --
 UPDATE consumers
 SET
@@ -205,7 +211,7 @@ WHERE
     id = NEW.consumer_id;
 
 --
---
+-- deleting the events that has been acked
 --
 UPDATE consumers_events
 SET
@@ -287,29 +293,9 @@ END;
 CREATE TRIGGER IF NOT EXISTS trigger_queue_consumers_events_acked
 --
 AFTER
-UPDATE OF acked ON consumers_events WHEN NEW.acked = 1
-AND NEW.event_id > (
-    -- Get the last event_id of the consumer that has been acked
-    -- since the update can be executed in batch
-    SELECT
-        COALESCE(last_event_id, '') AS last_event_id
-    FROM
-        consumers
-    WHERE
-        id = NEW.consumer_id
-)
--- We want to make sure that the trigger only runs for queue consumers
-AND EXISTS (
-    SELECT
-        1
-    FROM
-        consumers
-    WHERE
-        id = NEW.consumer_id
-        AND queue_name IS NOT NULL
-)
---
-BEGIN
+UPDATE OF acked ON consumers_events FOR EACH ROW WHEN NEW.acked = 1
+AND NEW.deleted = 0
+AND NEW.queued = 1 BEGIN
 --
 UPDATE consumers
 SET
@@ -334,30 +320,19 @@ WHERE
             id = NEW.consumer_id
     );
 
--- Because consumers_events is getting bigger and bigger
--- we need to delete the old events that has been acked
--- and keep the latest one, 
--- However, calling delete will cause the trigger to be called again
--- So at the beginning of the trigger, we need to check if the new event
--- is bigger than the last_event_id of the consumer, if not, it means that tigger
--- should not be called
-DELETE FROM consumers_events
+--
+-- deleting the events that has been acked
+--
+UPDATE consumers_events
+SET
+    deleted = 1
 WHERE
     consumer_id = NEW.consumer_id
-    AND acked = 1
-    AND rowid NOT IN (
-        SELECT
-            MAX(rowid)
-        FROM
-            consumers_events
-        WHERE
-            consumer_id = NEW.consumer_id
-            AND acked = 1
-    );
+    AND event_id = NEW.event_id;
 
 --
 INSERT INTO
-    consumers_events (consumer_id, event_id)
+    consumers_events (consumer_id, event_id, queued)
 SELECT
     (
         SELECT
@@ -401,7 +376,8 @@ SELECT
             id
         LIMIT
             1
-    ) as event_id
+    ) as event_id,
+    1 as queued
 WHERE
     consumer_id IS NOT NULL
     AND event_id IS NOT NULL;

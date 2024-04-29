@@ -113,6 +113,36 @@ func SaveQueue(ctx context.Context, conn *sqlite.Conn, queue *bus.Queue) (err er
 	return err
 }
 
+func LoadNextConsumer(ctx context.Context, conn *sqlite.Conn, consumerId string) (string, error) {
+	stmt, err := conn.Prepare(ctx, `
+		SELECT
+			id,
+			MIN(acked_counts) AS acked_counts
+		FROM consumers
+		WHERE 
+		queue_name IS NOT NULL
+		AND queue_name = (
+			SELECT queue_name FROM consumers WHERE id = ?
+		)
+		LIMIT 1;`, consumerId)
+	if err != nil {
+		return "", err
+	}
+
+	defer stmt.Finalize()
+
+	hasRow, err := stmt.Step()
+	if err != nil {
+		return "", err
+	}
+
+	if !hasRow {
+		return "", ErrConsumerNotFound
+	}
+
+	return stmt.GetText("id"), nil
+}
+
 func LoadNotAckedEvents(ctx context.Context, conn *sqlite.Conn, consumerId string, eventId string) (events []*bus.Event, err error) {
 	stmt, err := conn.Prepare(ctx, `
 		SELECT 

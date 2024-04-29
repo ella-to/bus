@@ -39,6 +39,13 @@ func (h *Handler) CreateQueue(ctx context.Context, queue *bus.Queue) (err error)
 
 }
 
+func (h *Handler) LoadNextConsumer(ctx context.Context, consumerId string) (nextId string, err error) {
+	h.dbw.Submit(func(conn *sqlite.Conn) {
+		nextId, err = storage.LoadNextConsumer(ctx, conn, consumerId)
+	})
+	return
+}
+
 func (h *Handler) LoadNotAckedEvents(ctx context.Context, consumerId string, eventId string) (events []*bus.Event, err error) {
 	h.dbw.Submit(func(conn *sqlite.Conn) {
 		events, err = storage.LoadNotAckedEvents(ctx, conn, consumerId, eventId)

@@ -494,6 +494,13 @@ func (h *Handler) ackAction(ctx context.Context, consumerId, eventId string) err
 		return err
 	}
 
+	nextId, err := h.LoadNextConsumer(ctx, consumerId)
+	if err == nil && nextId != "" {
+		consumerId = nextId
+	} else if err != nil && !errors.Is(err, storage.ErrConsumerNotFound) {
+		return err
+	}
+
 	notAckedEvents, err := h.LoadNotAckedEvents(ctx, consumerId, eventId)
 	if err != nil {
 		return err

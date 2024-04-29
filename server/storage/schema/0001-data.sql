@@ -69,6 +69,7 @@ CREATE TABLE
     IF NOT EXISTS consumers_events (
         consumer_id TEXT,
         event_id TEXT NOT NULL,
+        queued INTEGER NOT NULL DEFAULT 0,
         acked INTEGER NOT NULL DEFAULT 0,
         deleted INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE,
