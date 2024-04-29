@@ -11,8 +11,6 @@ services:
       # if you want to use in memory
       # dont set BUS_STORAGE_PATH
       - BUS_STORAGE_PATH=/storage/bus.db
-      - BUS_BATCH_WINDOW_SIZE=100
-      - BUS_BATCH_WINDOW_DURATION=5s
       - BUS_WORKER_BUFFER_SIZE=1000
       - BUS_CLEAN_EXPIRED_EVENTS_FREQ=30s
 

@@ -16,13 +16,13 @@ import (
 	"ella.to/sse"
 )
 
+const DefaultAddr = "0.0.0.0:2021"
+
 // OPTIONS
 
 type config struct {
 	dbOpts                 []sqlite.OptionFunc
 	dbPoolSize             int
-	batchWindowSize        int
-	batchWindowDuration    time.Duration
 	workerBufferSize       int64
 	cleanExpiredEventsFreq time.Duration
 }
@@ -50,20 +50,6 @@ func WithStoragePoolSize(size int) Opt {
 func WithStoragePath(path string) Opt {
 	return optFn(func(s *config) error {
 		s.dbOpts = append(s.dbOpts, sqlite.WithFile(path))
-		return nil
-	})
-}
-
-func WithBatchWindowSize(size int) Opt {
-	return optFn(func(s *config) error {
-		s.batchWindowSize = size
-		return nil
-	})
-}
-
-func WithBatchWindowDuration(d time.Duration) Opt {
-	return optFn(func(s *config) error {
-		s.batchWindowDuration = d
 		return nil
 	})
 }
@@ -393,12 +379,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // which populates the consumers_events table with the event that has not been
 // consumed by the consumers yet
 func (h *Handler) putAction(ctx context.Context, event *bus.Event) error {
+	fmt.Println("#### PUT ACTION")
 	err := h.AppendEvents(ctx, event)
 	if err != nil {
 		return err
 	}
 
-	consumerIds, err := h.LoadConsumerIdsByEventId(ctx, event.Subject)
+	consumerIds, err := h.LoadConsumerIdsByEventId(ctx, event.Id)
 	if err != nil {
 		return err
 	}
@@ -413,6 +400,7 @@ func (h *Handler) putAction(ctx context.Context, event *bus.Event) error {
 }
 
 func (h *Handler) getAction(ctx context.Context, consumer *bus.Consumer) (chan []*bus.Event, error) {
+	fmt.Println("#### GET ACTION")
 	var err error
 
 	_, ok := h.consumersEventsMap.GetConsumer(consumer.Id)
@@ -489,6 +477,7 @@ func (h *Handler) getAction(ctx context.Context, consumer *bus.Consumer) (chan [
 }
 
 func (h *Handler) ackAction(ctx context.Context, consumerId, eventId string) error {
+	fmt.Println("#### ACK ACTION")
 	err := h.AckEvent(ctx, consumerId, eventId)
 	if err != nil {
 		return err
@@ -521,6 +510,7 @@ func (h *Handler) ackAction(ctx context.Context, consumerId, eventId string) err
 }
 
 func (h *Handler) deleteAction(ctx context.Context, consumerId string) error {
+	fmt.Println("#### DELETE ACTION")
 	err := h.DeleteConsumer(ctx, consumerId)
 	if err != nil {
 		return err
@@ -535,6 +525,7 @@ func (h *Handler) processActions() {
 	actions := h.actions.Stream()
 	for {
 		ctx := context.Background()
+		fmt.Println("#### PROCESS ACTIONS")
 
 		select {
 		case <-h.closeSignal:
@@ -564,8 +555,6 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 		dbOpts: []sqlite.OptionFunc{
 			sqlite.WithMemory(),
 		},
-		batchWindowSize:        20,
-		batchWindowDuration:    500 * time.Millisecond,
 		workerBufferSize:       1000,
 		cleanExpiredEventsFreq: 30 * time.Second,
 	}
@@ -599,8 +588,7 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 	h.mux.HandleFunc("HEAD /", h.ackedHandler)            // HEAD /?consumer_id=123&event_id=456
 	h.mux.HandleFunc("DELETE /", h.deleteConsumerHandler) // DELETE /?consumer_id=123
 
-	// TODO: fix this
-	// go h.removeExpiredEventsLoop(ctx, conf.cleanExpiredEventsFreq)
+	go h.removeExpiredEventsLoop(ctx, conf.cleanExpiredEventsFreq)
 
 	return h, nil
 }

@@ -3,6 +3,7 @@ package bus_test
 import (
 	"context"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"ella.to/bus/client"
@@ -11,10 +12,15 @@ import (
 )
 
 func setupBusServer(t *testing.T) *client.Client {
+	os.Remove("./bus.db")
+	os.Remove("./bus.db-wal")
+	os.Remove("./bus.db-shm")
+
 	handler, err := server.New(
 		context.TODO(),
 
 		server.WithStoragePoolSize(10),
+		server.WithStoragePath("./bus.db"),
 	)
 	assert.NoError(t, err)
 

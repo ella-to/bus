@@ -39,7 +39,7 @@ func getLogLevel() slog.Level {
 func getServerAddr() string {
 	value := os.Getenv("BUS_SERVER_ADDR")
 	if value == "" {
-		return "0.0.0.0:2021"
+		return server.DefaultAddr
 	}
 
 	return value
@@ -61,24 +61,6 @@ func getStoragePath(serverOpts []server.Opt) []server.Opt {
 	}
 
 	return append(serverOpts, server.WithStoragePath(value))
-}
-
-func getBatchWindowSize(serverOpts []server.Opt) []server.Opt {
-	value, err := strconv.ParseInt(os.Getenv("BUS_BATCH_WINDOW_SIZE"), 10, 64)
-	if err != nil {
-		return serverOpts
-	}
-
-	return append(serverOpts, server.WithBatchWindowSize(int(value)))
-}
-
-func getBatchWindowDuration(serverOpts []server.Opt) []server.Opt {
-	value, err := time.ParseDuration(os.Getenv("BUS_BATCH_WINDOW_DURATION"))
-	if err != nil {
-		return serverOpts
-	}
-
-	return append(serverOpts, server.WithBatchWindowDuration(value))
 }
 
 func getWorkerBufferSize(serverOpts []server.Opt) []server.Opt {
@@ -110,8 +92,6 @@ func main() {
 
 	serverOpts = getStoragePoolSize(serverOpts)
 	serverOpts = getStoragePath(serverOpts)
-	serverOpts = getBatchWindowSize(serverOpts)
-	serverOpts = getBatchWindowDuration(serverOpts)
 	serverOpts = getWorkerBufferSize(serverOpts)
 	serverOpts = getCleanExpiredEventsFreq(serverOpts)
 
