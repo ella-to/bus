@@ -574,6 +574,7 @@ func New(ctx context.Context, opts ...Opt) (*Handler, error) {
 	h := &Handler{
 		consumersEventsMap: NewConsumersEventsMap(),
 		actions:            NewActions(conf.workerBufferSize),
+		closeSignal:        make(chan struct{}),
 	}
 
 	go h.processActions()
