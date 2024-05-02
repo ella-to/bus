@@ -162,7 +162,7 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 	consumer.QueueName = header.Get("Consumer-Queue")
 	isAutoAck := header.Get("Consumer-Ack-Strategy") == "auto"
 
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(req.Context())
 
 	incomings := sse.Receive(ctx, resp.Body)
 
