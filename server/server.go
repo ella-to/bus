@@ -241,6 +241,8 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		if isAutoAck {
 			if lastEventId != "" {
 				select {
+				case <-h.closeSignal:
+					return
 				case <-ctx.Done():
 					return
 				case events, ok := <-batch:
@@ -271,6 +273,8 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			} else {
 				select {
+				case <-h.closeSignal:
+					return
 				case <-ctx.Done():
 					return
 				case events, ok := <-batch:
@@ -292,6 +296,8 @@ func (h *Handler) consumerHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			select {
+			case <-h.closeSignal:
+				return
 			case <-ctx.Done():
 				return
 			case events, ok := <-batch:
