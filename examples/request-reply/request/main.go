@@ -19,11 +19,12 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fn := bus.Request[*data.Req, *data.Resp](c, "func.div")
+	fn := bus.Request(c, "func.div")
 
 	for range 1000 {
 		req := &data.Req{A: 4, B: 2}
-		resp, err := fn(ctx, req)
+		resp := &data.Resp{}
+		err := fn(ctx, req, resp)
 		if err != nil {
 			fmt.Printf("%s = %s\n", req, err)
 		} else {

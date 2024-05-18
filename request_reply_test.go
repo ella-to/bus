@@ -21,7 +21,7 @@ func TestRequestReply(t *testing.T) {
 		Result int
 	}
 
-	bus.Reply(context.TODO(), client, "func.div", func(ctx context.Context, req *Req) (*Resp, error) {
+	bus.Reply(context.TODO(), client, "func.div", func(ctx context.Context, req *Req) (resp *Resp, err error) {
 		if req.B == 0 {
 			return nil, fmt.Errorf("division by zero")
 		}
@@ -29,16 +29,18 @@ func TestRequestReply(t *testing.T) {
 		return &Resp{Result: req.A / req.B}, nil
 	})
 
-	fn := bus.Request[*Req, *Resp](client, "func.div")
+	fn := bus.Request(client, "func.div")
 
 	req := &Req{A: 4, B: 2}
-	resp, err := fn(context.Background(), req)
+	resp := &Resp{}
+	err := fn(context.Background(), req, resp)
+
 	assert.NoError(t, err)
 	assert.Equal(t, 2, resp.Result)
 
 	req = &Req{A: 4, B: 0}
-	resp, err = fn(context.Background(), req)
+	resp = &Resp{}
+	err = fn(context.Background(), req, resp)
 	assert.Error(t, err)
 	assert.Equal(t, "division by zero", err.Error())
-	assert.Nil(t, resp)
 }

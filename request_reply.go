@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"reflect"
 	"time"
 )
 
-type RequestReplyFunc[Req, Resp any] func(context.Context, Req) (Resp, error)
+type RequestFunc func(ctx context.Context, req any, resp any) error
+type ReplyFunc[Req, Resp any] func(ctx context.Context, req Req) (Resp, error)
 
-func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req, Resp] {
-	return func(ctx context.Context, req Req) (resp Resp, err error) {
+func Request(stream Stream, subject string) RequestFunc {
+	return func(ctx context.Context, req any, resp any) (err error) {
 		evt, err := NewEvent(
 			WithSubject(subject),
 			WithReply(),
@@ -20,12 +20,12 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 			WithExpiresAt(30*time.Second),
 		)
 		if err != nil {
-			return resp, err
+			return err
 		}
 
 		err = stream.Put(ctx, evt)
 		if err != nil {
-			return resp, err
+			return err
 		}
 
 		for msgs, err := range stream.Get(
@@ -34,11 +34,11 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 			WithFromOldest(),
 		) {
 			if err != nil {
-				return resp, err
+				return err
 			}
 
 			if len(msgs.Events) != 1 {
-				return resp, fmt.Errorf("expected one event")
+				return fmt.Errorf("expected one event but got %d", len(msgs.Events))
 			}
 
 			evt := msgs.Events[0]
@@ -50,31 +50,31 @@ func Request[Req, Resp any](stream Stream, subject string) RequestReplyFunc[Req,
 
 			err = json.Unmarshal(evt.Data, &replyMsg)
 			if err != nil {
-				return resp, err
+				return err
 			}
 
 			if replyMsg.Type == "error" {
 				var errMsg string
 				err = json.Unmarshal(replyMsg.Payload, &errMsg)
 				if err != nil {
-					return resp, err
+					return err
 				}
-				return resp, fmt.Errorf(errMsg)
+				return fmt.Errorf(errMsg)
 			}
 
-			resp, err = jsonUnmarshal[Resp](replyMsg.Payload)
+			err = json.Unmarshal(replyMsg.Payload, resp)
 			if err != nil {
-				return resp, err
+				return err
 			}
 
-			return resp, nil
+			return nil
 		}
 
 		return
 	}
 }
 
-func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn RequestReplyFunc[Req, Resp]) {
+func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn ReplyFunc[*Req, *Resp]) {
 	queueName := fmt.Sprintf("queue.%s", subject)
 	msgs := stream.Get(
 		ctx,
@@ -97,7 +97,8 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 
 			event := msg.Events[0]
 
-			req, err := jsonUnmarshal[Req](event.Data)
+			var req Req
+			err = json.Unmarshal(event.Data, &req)
 			if err != nil {
 				return
 			}
@@ -107,7 +108,7 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 				Payload any    `json:"payload"`
 			}
 
-			resp, err := fn(ctx, req)
+			resp, err := fn(ctx, &req)
 			if err != nil {
 				replyMsg.Type = "error"
 				replyMsg.Payload = err.Error()
@@ -132,18 +133,4 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 			}
 		}
 	}()
-}
-
-func jsonUnmarshal[T any](data json.RawMessage) (v T, err error) {
-	v = initializePointer(v)
-	err = json.Unmarshal(data, &v)
-	return v, err
-}
-
-func initializePointer[T any](v T) T {
-	t := reflect.TypeOf(v)
-	if t.Kind() != reflect.Ptr {
-		return v
-	}
-	return reflect.New(t.Elem()).Interface().(T)
 }

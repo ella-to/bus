@@ -44,11 +44,12 @@ func main() {
 		return &Resp{Result: req.A / req.B}, nil
 	})
 
-	fn := bus.Request[*Req, *Resp](c, funcName)
+	fn := bus.Request(c, funcName)
 
 	for range 1000 {
 		req := &Req{A: 4, B: 2}
-		resp, err := fn(ctx, req)
+		resp := &Resp{}
+		err := fn(ctx, req, resp)
 		if err != nil {
 			fmt.Printf("%s = %s\n", req, err)
 		} else {
