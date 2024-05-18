@@ -9,7 +9,7 @@ import (
 )
 
 type RequestFunc func(ctx context.Context, req any, resp any) error
-type ReplyFunc[Req, Resp any] func(ctx context.Context, req Req) (Resp, error)
+type ReplyFunc func(ctx context.Context, req json.RawMessage) (any, error)
 
 func Request(stream Stream, subject string) RequestFunc {
 	return func(ctx context.Context, req any, resp any) (err error) {
@@ -74,7 +74,7 @@ func Request(stream Stream, subject string) RequestFunc {
 	}
 }
 
-func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn ReplyFunc[*Req, *Resp]) {
+func Reply(ctx context.Context, stream Stream, subject string, fn ReplyFunc) {
 	queueName := fmt.Sprintf("queue.%s", subject)
 	msgs := stream.Get(
 		ctx,
@@ -97,18 +97,12 @@ func Reply[Req, Resp any](ctx context.Context, stream Stream, subject string, fn
 
 			event := msg.Events[0]
 
-			var req Req
-			err = json.Unmarshal(event.Data, &req)
-			if err != nil {
-				return
-			}
-
 			var replyMsg struct {
 				Type    string `json:"type"`
 				Payload any    `json:"payload"`
 			}
 
-			resp, err := fn(ctx, &req)
+			resp, err := fn(ctx, event.Data)
 			if err != nil {
 				replyMsg.Type = "error"
 				replyMsg.Payload = err.Error()

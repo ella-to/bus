@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"ella.to/bus"
@@ -36,8 +37,15 @@ func main() {
 
 	funcName := "func.div"
 
-	bus.Reply(ctx, c, funcName, func(ctx context.Context, req *Req) (*Resp, error) {
+	bus.Reply(ctx, c, funcName, func(ctx context.Context, in json.RawMessage) (any, error) {
 		fmt.Println("Got a request")
+
+		req := &Req{}
+		err := json.Unmarshal(in, req)
+		if err != nil {
+			return nil, err
+		}
+
 		if req.B == 0 {
 			return nil, fmt.Errorf("division by zero")
 		}
