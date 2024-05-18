@@ -51,6 +51,7 @@ func TestConfirmConsumer(t *testing.T) {
 		// as it could happen that the event can be sent before the consumer starts
 
 		for msg, err := range c.Get(ctx, bus.WithFromOldest(), bus.WithSubject("a.b.c"), bus.WithManualAck()) {
+			atomic.AddInt64(&hit, 1)
 
 			assert.NoError(t, err)
 			assert.NotNil(t, msg)
@@ -61,7 +62,6 @@ func TestConfirmConsumer(t *testing.T) {
 			assert.Equal(t, "a.b.c", evt.Subject)
 			assert.Equal(t, `"hello"`, string(evt.Data))
 
-			atomic.AddInt64(&hit, 1)
 			err = msg.Ack(ctx)
 			assert.NoError(t, err)
 
