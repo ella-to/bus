@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-type RequestFunc func(ctx context.Context, req any, resp any) error
+type RequestFunc func(ctx context.Context, req any) (json.RawMessage, error)
 type ReplyFunc func(ctx context.Context, req json.RawMessage) (any, error)
 
 func Request(stream Stream, subject string) RequestFunc {
-	return func(ctx context.Context, req any, resp any) (err error) {
+	return func(ctx context.Context, req any) (out json.RawMessage, err error) {
 		evt, err := NewEvent(
 			WithSubject(subject),
 			WithReply(),
@@ -20,12 +20,12 @@ func Request(stream Stream, subject string) RequestFunc {
 			WithExpiresAt(30*time.Second),
 		)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		err = stream.Put(ctx, evt)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		for msgs, err := range stream.Get(
@@ -34,11 +34,11 @@ func Request(stream Stream, subject string) RequestFunc {
 			WithFromOldest(),
 		) {
 			if err != nil {
-				return err
+				return nil, err
 			}
 
 			if len(msgs.Events) != 1 {
-				return fmt.Errorf("expected one event but got %d", len(msgs.Events))
+				return nil, fmt.Errorf("expected one event but got %d", len(msgs.Events))
 			}
 
 			evt := msgs.Events[0]
@@ -50,24 +50,19 @@ func Request(stream Stream, subject string) RequestFunc {
 
 			err = json.Unmarshal(evt.Data, &replyMsg)
 			if err != nil {
-				return err
+				return nil, err
 			}
 
 			if replyMsg.Type == "error" {
 				var errMsg string
 				err = json.Unmarshal(replyMsg.Payload, &errMsg)
 				if err != nil {
-					return err
+					return nil, err
 				}
-				return fmt.Errorf(errMsg)
+				return nil, fmt.Errorf(errMsg)
 			}
 
-			err = json.Unmarshal(replyMsg.Payload, resp)
-			if err != nil {
-				return err
-			}
-
-			return nil
+			return replyMsg.Payload, nil
 		}
 
 		return

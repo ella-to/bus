@@ -40,14 +40,17 @@ func TestRequestReply(t *testing.T) {
 
 	req := &Req{A: 4, B: 2}
 	resp := &Resp{}
-	err := fn(context.Background(), req, resp)
+	rawResp, err := fn(context.Background(), req)
+	err = json.Unmarshal(rawResp, resp)
+	assert.NoError(t, err)
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, resp.Result)
 
 	req = &Req{A: 4, B: 0}
 	resp = &Resp{}
-	err = fn(context.Background(), req, resp)
+	rawResp, err = fn(context.Background(), req)
+	assert.Nil(t, rawResp)
 	assert.Error(t, err)
 	assert.Equal(t, "division by zero", err.Error())
 }

@@ -57,10 +57,11 @@ func main() {
 	for range 1000 {
 		req := &Req{A: 4, B: 2}
 		resp := &Resp{}
-		err := fn(ctx, req, resp)
+		rawResp, err := fn(ctx, req)
 		if err != nil {
 			fmt.Printf("%s = %s\n", req, err)
 		} else {
+			json.Unmarshal(rawResp, resp)
 			fmt.Printf("%s = %s\n", req, resp)
 		}
 	}
