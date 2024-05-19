@@ -195,6 +195,10 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 					}
 				}
 
+				if !yield(msg, err) {
+					return
+				}
+
 				for _, evt := range events {
 					if evt.ReplyCount > 0 {
 						confirmEvent, err := bus.NewEvent(bus.WithSubject(evt.Reply), bus.WithData([]byte(`{"type":"confirm"}`)))
@@ -212,13 +216,15 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 				events = nil
 				msg = nil
 				err = fmt.Errorf("%s", incoming.Data)
+
+				if !yield(msg, err) {
+					return
+				}
+
 			case "done":
 				return
 			}
 
-			if !yield(msg, err) {
-				break
-			}
 		}
 	}
 }
