@@ -22,7 +22,9 @@ func TestRequestReply(t *testing.T) {
 		Result int
 	}
 
-	bus.Reply(context.TODO(), client, "func.div", func(ctx context.Context, in json.RawMessage) (resp any, err error) {
+	subject := "func.div"
+
+	bus.Reply(context.TODO(), client, subject, func(ctx context.Context, in json.RawMessage) (resp any, err error) {
 		req := &Req{}
 		err = json.Unmarshal(in, req)
 		if err != nil {
@@ -36,7 +38,7 @@ func TestRequestReply(t *testing.T) {
 		return &Resp{Result: req.A / req.B}, nil
 	})
 
-	fn := bus.Request(client, "func.div")
+	fn := bus.Request(client, subject)
 
 	req := &Req{A: 4, B: 2}
 	resp := &Resp{}
