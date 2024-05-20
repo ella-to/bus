@@ -161,9 +161,9 @@ WHERE
                     id,
                     MIN(acked_counts)
                 FROM
-                    consumers
+                    consumers AS internal_consumers
                 WHERE
-                    queue_name = consumers.queue_name
+                    internal_consumers.queue_name = consumers.queue_name
                 LIMIT
                     1
             )
