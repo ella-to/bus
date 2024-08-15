@@ -302,6 +302,23 @@ func (s *Sqlite) DeleteConsumer(ctx context.Context, consumerId string) (err err
 	return
 }
 
+func (s *Sqlite) DeleteExpiredEvents(ctx context.Context) (err error) {
+	s.wdb.Submit(func(conn *sqlite.Conn) {
+		var stmt *sqlite.Stmt
+
+		stmt, err = conn.Prepare(ctx, `DELETE FROM events WHERE expires_at < ?;`, time.Now())
+		if err != nil {
+			return
+		}
+
+		defer stmt.Finalize()
+
+		_, err = stmt.Step()
+	})
+
+	return
+}
+
 func (s *Sqlite) Close() error {
 	return s.db.Close()
 }

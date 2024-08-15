@@ -9,13 +9,14 @@ import (
 type ActionType int
 
 const (
-	_                ActionType = iota
-	PutEvent                    // PutEvent is used to put an event into the bus
-	RegisterConsumer            // RegisterConsumer is used to register a consumer
-	PushEvent                   // PushEvent is used to push an event to relevent consumers
-	AckEvent                    // AckEvent is used to acknowledge an event
-	DeleteConsumer              // DeleteConsumer is used to delete a consumer
-	Cleanup                     // Cleanup is used to clean up the bus for expired events and consumers
+	_                   ActionType = iota
+	PutEvent                       // PutEvent is used to put an event into the bus
+	RegisterConsumer               // RegisterConsumer is used to register a consumer
+	PushEvent                      // PushEvent is used to push an event to relevent consumers
+	AckEvent                       // AckEvent is used to acknowledge an event
+	DeleteConsumer                 // DeleteConsumer is used to delete a consumer
+	DeleteExpiredEvents            // DeleteExpiredEvents is used to delete expired events
+	Cleanup                        // Cleanup is used to clean up the bus for expired events and consumers
 )
 
 type Action struct {
@@ -52,9 +53,10 @@ type Dispatcher struct {
 
 	putEventFunc         func(ctx context.Context, evt *bus.Event) error
 	registerConsumerFunc func(ctx context.Context, consumer *bus.Consumer) (<-chan []*bus.Event, error)
-	pushEventFunc        func(ctx context.Context, eventId string, consumerId string)
-	ackEventFunc         func(ctx context.Context, consumerId, eventId string) error
+	pushEventFunc        func(ctx context.Context, consumerId string, eventId string)
+	ackEventFunc         func(ctx context.Context, consumerId string, eventId string) error
 	deleteConsumerFunc   func(ctx context.Context, consumerId string) error
+	deleteExpiredEvents  func(ctx context.Context) error
 }
 
 func (d *Dispatcher) PutEvent(ctx context.Context, evt *bus.Event) error {
@@ -84,7 +86,7 @@ func (d *Dispatcher) RegisterConsumer(ctx context.Context, consumer *bus.Consume
 	return action.BatchEvents, nil
 }
 
-func (d *Dispatcher) PushEvent(ctx context.Context, eventId string, consumerId string) {
+func (d *Dispatcher) PushEvent(ctx context.Context, consumerId string, eventId string) {
 	action := d.getAction()
 	action.Type = PushEvent
 	action.Ctx = ctx
@@ -110,6 +112,16 @@ func (d *Dispatcher) DeleteConsumer(ctx context.Context, consumerId string) erro
 	action := d.getAction()
 	action.Type = DeleteConsumer
 	action.ConsumerId = consumerId
+	action.Ctx = ctx
+
+	d.pushAction(action)
+
+	return <-action.Error
+}
+
+func (d *Dispatcher) DeleteExpiredEvents(ctx context.Context) error {
+	action := d.getAction()
+	action.Type = DeleteExpiredEvents
 	action.Ctx = ctx
 
 	d.pushAction(action)
@@ -147,11 +159,13 @@ func (d *Dispatcher) run() {
 				action.BatchEvents = batchEvents
 				action.Error <- err
 			case PushEvent:
-				d.pushEventFunc(action.Ctx, action.EventId, action.ConsumerId)
+				d.pushEventFunc(action.Ctx, action.ConsumerId, action.EventId)
 			case AckEvent:
 				action.Error <- d.ackEventFunc(action.Ctx, action.ConsumerId, action.EventId)
 			case DeleteConsumer:
 				action.Error <- d.deleteConsumerFunc(action.Ctx, action.ConsumerId)
+			case DeleteExpiredEvents:
+				action.Error <- d.deleteExpiredEvents(action.Ctx)
 			}
 
 			action.clean()
@@ -167,7 +181,45 @@ func (d *Dispatcher) Close() {
 	close(d.closeSignal)
 }
 
-func NewDispatcher(bufferSize int, poolSize int, fns ...any) *Dispatcher {
+type dipatcherOpt func(*Dispatcher)
+
+func withPutEventFunc(fn func(context.Context, *bus.Event) error) dipatcherOpt {
+	return func(d *Dispatcher) {
+		d.putEventFunc = fn
+	}
+}
+
+func withRegisterConsumerFunc(fn func(context.Context, *bus.Consumer) (<-chan []*bus.Event, error)) dipatcherOpt {
+	return func(d *Dispatcher) {
+		d.registerConsumerFunc = fn
+	}
+}
+
+func withPushEventFunc(fn func(context.Context, string, string)) dipatcherOpt {
+	return func(d *Dispatcher) {
+		d.pushEventFunc = fn
+	}
+}
+
+func withAckEventFunc(fn func(context.Context, string, string) error) dipatcherOpt {
+	return func(d *Dispatcher) {
+		d.ackEventFunc = fn
+	}
+}
+
+func withDeleteConsumerFunc(fn func(context.Context, string) error) dipatcherOpt {
+	return func(d *Dispatcher) {
+		d.deleteConsumerFunc = fn
+	}
+}
+
+func withDeleteExpiredEventsFunc(fn func(context.Context) error) dipatcherOpt {
+	return func(d *Dispatcher) {
+		d.deleteExpiredEvents = fn
+	}
+}
+
+func NewDispatcher(bufferSize int, poolSize int, fns ...dipatcherOpt) *Dispatcher {
 	d := &Dispatcher{
 		actions:     make(chan *Action, bufferSize),
 		actionsPool: make(chan *Action, poolSize),
@@ -175,18 +227,7 @@ func NewDispatcher(bufferSize int, poolSize int, fns ...any) *Dispatcher {
 	}
 
 	for _, fn := range fns {
-		switch f := fn.(type) {
-		case func(context.Context, *bus.Event) error:
-			d.putEventFunc = f
-		case func(context.Context, *bus.Consumer) (<-chan []*bus.Event, error):
-			d.registerConsumerFunc = f
-		case func(context.Context, string, string):
-			d.pushEventFunc = f
-		case func(context.Context, string, string) error:
-			d.ackEventFunc = f
-		case func(context.Context, string) error:
-			d.deleteConsumerFunc = f
-		}
+		fn(d)
 	}
 
 	if d.putEventFunc == nil {
@@ -207,6 +248,10 @@ func NewDispatcher(bufferSize int, poolSize int, fns ...any) *Dispatcher {
 
 	if d.deleteConsumerFunc == nil {
 		panic("deleteConsumerFunc is required")
+	}
+
+	if d.deleteExpiredEvents == nil {
+		panic("deleteExpiredEvents is required")
 	}
 
 	for i := 0; i < poolSize; i++ {

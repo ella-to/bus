@@ -17,9 +17,9 @@ func (s *Server) putEvent(ctx context.Context, event *bus.Event) (err error) {
 }
 
 func (s *Server) registerConsumer(ctx context.Context, consumer *bus.Consumer) (<-chan []*bus.Event, error) {
-	if consumer.LastEventId == "oldest" {
+	if consumer.LastEventId == bus.Oldest {
 		consumer.LastEventId = ""
-	} else if consumer.LastEventId == "latest" {
+	} else if consumer.LastEventId == bus.Newest {
 		lastEventId, err := s.storage.LoadLastEventId(ctx)
 		if err != nil {
 			return nil, err
@@ -53,7 +53,7 @@ func (s *Server) registerConsumer(ctx context.Context, consumer *bus.Consumer) (
 //
 // 1. when a new event is published, eventId is not empty and consumerId is empty
 // 2. when a consumer is registered, eventId is emtpy and consumerId is not
-func (s *Server) pushEvent(ctx context.Context, eventId string, consumerId string) {
+func (s *Server) pushEvent(ctx context.Context, consumerId string, eventId string) {
 	if eventId != "" {
 		event, err := s.storage.LoadEventById(ctx, eventId)
 		if err != nil {
@@ -124,7 +124,7 @@ func (s *Server) pushEvent(ctx context.Context, eventId string, consumerId strin
 	}
 }
 
-func (s *Server) ackEvent(ctx context.Context, consumerId, eventId string) (err error) {
+func (s *Server) ackEvent(ctx context.Context, consumerId string, eventId string) (err error) {
 	//
 	// Update the consumer acked counts and last event id
 	// and if consumer is part of a queue, update all consumers last event id
@@ -139,6 +139,15 @@ func (s *Server) ackEvent(ctx context.Context, consumerId, eventId string) (err 
 
 func (s *Server) deleteConsumer(ctx context.Context, consumerId string) (err error) {
 	err = s.storage.DeleteConsumer(ctx, consumerId)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Server) deleteExpiredEvents(ctx context.Context) (err error) {
+	err = s.storage.DeleteExpiredEvents(ctx)
 	if err != nil {
 		return err
 	}

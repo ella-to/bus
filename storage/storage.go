@@ -22,5 +22,6 @@ type Storage interface {
 	LoadLastEventId(ctx context.Context) (string, error)
 	UpdateConsumerAck(ctx context.Context, consumerId string, eventId string) error
 	DeleteConsumer(ctx context.Context, consumerId string) error
+	DeleteExpiredEvents(ctx context.Context) error
 	Close() error
 }

@@ -51,7 +51,7 @@ func (s *Server) publishHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.dispatcher.PushEvent(ctx, evt.Id, "")
+	s.dispatcher.PushEvent(ctx, "", evt.Id)
 
 	header := w.Header()
 
@@ -117,7 +117,7 @@ func (s *Server) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.dispatcher.PushEvent(ctx, "", consumer.Id)
+	s.dispatcher.PushEvent(ctx, consumer.Id, "")
 
 	pusher, err := sse.CreatePusher(
 		w,
@@ -159,7 +159,7 @@ func (s *Server) consumerHandler(w http.ResponseWriter, r *http.Request) {
 					pusher.Push(ctx, "error", err)
 					return
 				}
-				s.dispatcher.PushEvent(ctx, "", consumer.Id)
+				s.dispatcher.PushEvent(ctx, consumer.Id, "")
 			}
 		}
 	}
@@ -187,7 +187,7 @@ func (s *Server) ackedHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.dispatcher.PushEvent(ctx, "", consumerId)
+	s.dispatcher.PushEvent(ctx, consumerId, "")
 
 	w.WriteHeader(http.StatusAccepted)
 }
