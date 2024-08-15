@@ -5,7 +5,6 @@ CREATE TABLE
     IF NOT EXISTS events (
         id TEXT NOT NULL,
         subject TEXT NOT NULL,
-        type INTEGER NOT NULL,
         reply TEXT,
         reply_count INTEGER NOT NULL DEFAULT 0,
         size INTEGER NOT NULL,
@@ -27,18 +26,18 @@ CREATE INDEX IF NOT EXISTS events_expires_at ON events (expires_at);
 CREATE TABLE
     IF NOT EXISTS consumers (
         id TEXT NOT NULL,
-        pattern TEXT NOT NULL,
+        subject TEXT NOT NULL,
         type INTEGER NOT NULL,
         ack_strategy INTEGER NOT NULL,
         batch_size INTEGER NOT NULL DEFAULT 1,
         queue_name TEXT, -- <- queue name, can be null
-        acked_counts INTEGER NOT NULL DEFAULT 0,
+        acked_count INTEGER NOT NULL DEFAULT 0,
         last_event_id TEXT, -- <- last event id consumed, can be null
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (id)
     );
 
-CREATE INDEX IF NOT EXISTS consumers_pattern ON consumers (pattern);
+CREATE INDEX IF NOT EXISTS consumers_subject ON consumers (subject);
 
 CREATE INDEX IF NOT EXISTS consumers_queue_name ON consumers (queue_name);
 

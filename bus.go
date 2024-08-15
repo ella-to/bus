@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -79,7 +80,7 @@ func (opt *subjectOpt) configureEvent(evt *Event) error {
 }
 
 func (opt *subjectOpt) configureConsumer(c *Consumer) error {
-	c.Pattern = opt.value
+	c.Subject = opt.value
 	return nil
 }
 
@@ -89,22 +90,10 @@ func WithSubject(subject string) *subjectOpt {
 
 func WithData(v any) EventOpt {
 	return eventOptFn(func(evt *Event) error {
-		if evt.Type != 0 {
-			return fmt.Errorf("event type is already set to %s", evt.Type)
-		}
-
-		if data, ok := v.([]byte); ok {
-			evt.Data = data
-			evt.Type = Raw
-			return nil
-		}
-
 		data, err := json.Marshal(v)
 		if err != nil {
 			return err
 		}
-
-		evt.Type = Json
 		evt.Data = data
 		return nil
 	})
@@ -221,42 +210,18 @@ func WithInitAck(consumerId string, acker Acker) MsgOpt {
 // EVENTS
 //
 
-type EventType int
-
-const (
-	_ EventType = iota
-	Raw
-	Json
-)
-
-func (t EventType) String() string {
-	switch t {
-	case Raw:
-		return "raw"
-	case Json:
-		return "json"
-	default:
-		return "unknown"
-	}
-}
-
 type Event struct {
-	Id         string    `json:"id"`
-	Subject    string    `json:"subject"`
-	Type       EventType `json:"type"`
-	Reply      string    `json:"reply_to"`
-	ReplyCount int64     `json:"reply_count"`
-	Size       int64     `json:"size"`
-	Data       []byte    `json:"data"`
-	CreatedAt  time.Time `json:"created_at"`
-	ExpiresAt  time.Time `json:"expires_at,omitempty"`
+	Id         string          `json:"id"`
+	Subject    string          `json:"subject"`
+	Reply      string          `json:"reply_to"`
+	ReplyCount int64           `json:"reply_count"`
+	Size       int64           `json:"size"`
+	Data       json.RawMessage `json:"data"`
+	CreatedAt  time.Time       `json:"created_at"`
+	ExpiresAt  time.Time       `json:"expires_at,omitempty"`
 }
 
 func (e *Event) ParseJsonData(v any) error {
-	if e.Type != Json {
-		return fmt.Errorf("event type is not json")
-	}
-
 	return json.Unmarshal(e.Data, v)
 }
 
@@ -330,6 +295,19 @@ func (t ConsumerType) String() string {
 	}
 }
 
+func ParseConsumerType(s string, defaultType ConsumerType) ConsumerType {
+	switch s {
+	case "ephemeral":
+		return Ephemeral
+	case "durable":
+		return Durable
+	case "queue":
+		return Queue
+	default:
+		return defaultType
+	}
+}
+
 type AckStrategy int
 
 const (
@@ -349,9 +327,33 @@ func (s AckStrategy) String() string {
 	}
 }
 
+func ParseAckStrategy(s string, defaultStrategy AckStrategy) AckStrategy {
+	switch s {
+	case "auto":
+		return Auto
+	case "manual":
+		return Manual
+	default:
+		return defaultStrategy
+	}
+}
+
+func ParseBatchSize(s string, defaultSize int64) int64 {
+	if s == "" {
+		return defaultSize
+	}
+
+	i, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return defaultSize
+	}
+
+	return i
+}
+
 type Consumer struct {
 	Id          string       `json:"id"`
-	Pattern     string       `json:"pattern"`
+	Subject     string       `json:"subject"`
 	Type        ConsumerType `json:"type"`
 	QueueName   string       `json:"queue_name"`
 	AckStrategy AckStrategy  `json:"ack_strategy"`
@@ -369,6 +371,20 @@ func NewConsumer(opts ...ConsumerOpt) (*Consumer, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if c.BatchSize <= 0 {
+		c.BatchSize = 1
+	}
+
+	if c.AckStrategy == 0 {
+		c.AckStrategy = Auto
+	}
+
+	if c.QueueName != "" {
+		c.Type = Queue
+	} else if c.Type == 0 {
+		c.Type = Ephemeral
 	}
 
 	return c, nil
