@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"ella.to/bus/server"
@@ -85,7 +86,29 @@ func getAddr(defaultValue string) string {
 	return value
 }
 
+func getLogLevel() slog.Level {
+	value := os.Getenv("BUS_LOG_LEVEL")
+	if value == "" {
+		return slog.LevelInfo
+	}
+
+	switch strings.ToLower(value) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
 func main() {
+	slog.SetLogLoggerLevel(getLogLevel())
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
