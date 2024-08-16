@@ -251,30 +251,76 @@ func (s *Sqlite) LoadLastEventId(ctx context.Context) (lastEventId string, err e
 	return
 }
 
+func (s *Sqlite) updateConsumerAck(ctx context.Context, conn *sqlite.Conn, consumerId string, eventId string) (err error) {
+	var stmt *sqlite.Stmt
+
+	stmt, err = conn.Prepare(ctx,
+		`UPDATE consumers 
+		SET 
+			acked_count = acked_count + 1, 
+			last_event_id = ?,
+			updated_at = ?
+		WHERE 
+			id = ?;`,
+		eventId,
+		time.Now(),
+		consumerId,
+	)
+	if err != nil {
+		return
+	}
+
+	defer stmt.Finalize()
+
+	_, err = stmt.Step()
+
+	return
+}
+
+func (s *Sqlite) updateQueueConsumersAck(ctx context.Context, conn *sqlite.Conn, queueName string, eventId string) (err error) {
+	var stmt *sqlite.Stmt
+
+	stmt, err = conn.Prepare(ctx,
+		`UPDATE consumers 
+		SET 
+			last_event_id = ?,
+			updated_at = ?
+		WHERE 
+			queue_name = ?;`,
+		eventId,
+		time.Now(),
+		queueName,
+	)
+	if err != nil {
+		return
+	}
+
+	defer stmt.Finalize()
+
+	_, err = stmt.Step()
+
+	return
+}
+
 func (s *Sqlite) UpdateConsumerAck(ctx context.Context, consumerId string, eventId string) (err error) {
+	var consumer *bus.Consumer
+
+	consumer, err = s.LoadConsumerById(ctx, consumerId)
+	if err != nil {
+		return
+	}
+
 	s.wdb.Submit(func(conn *sqlite.Conn) {
-		var stmt *sqlite.Stmt
-
-		stmt, err = conn.Prepare(ctx,
-			`UPDATE consumers 
-			SET 
-			 	acked_count = acked_count + 1, 
-				last_event_id = ?,
-				updated_at = ?
-			WHERE 
-				id = ?;`,
-			eventId,
-			time.Now(),
-			consumerId,
-		)
-
+		err = s.updateConsumerAck(ctx, conn, consumerId, eventId)
 		if err != nil {
 			return
 		}
 
-		defer stmt.Finalize()
-
-		_, err = stmt.Step()
+		if consumer.QueueName != "" {
+			// NOTE: we need to make sure all the same queue_name have the same
+			// last_event_id
+			err = s.updateQueueConsumersAck(ctx, conn, consumer.QueueName, eventId)
+		}
 	})
 
 	return
