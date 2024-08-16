@@ -11,7 +11,6 @@ func loadConsumer(stmt *sqlite.Stmt) *bus.Consumer {
 	c.Id = stmt.GetText("id")
 	c.Subject = stmt.GetText("subject")
 	c.Type = bus.ConsumerType(stmt.GetInt64("type"))
-	c.AckStrategy = bus.AckStrategy(stmt.GetInt64("ack_strategy"))
 	c.BatchSize = stmt.GetInt64("batch_size")
 	c.QueueName = stmt.GetText("queue_name")
 	c.AckedCount = stmt.GetInt64("acked_count")

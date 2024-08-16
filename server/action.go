@@ -50,7 +50,6 @@ func (s *Server) registerConsumer(ctx context.Context, consumer *bus.Consumer) (
 
 			consumer.Type = dbConsumer.Type
 			consumer.LastEventId = dbConsumer.LastEventId
-			consumer.AckStrategy = dbConsumer.AckStrategy
 			consumer.BatchSize = dbConsumer.BatchSize
 			consumer.AckedCount = dbConsumer.AckedCount
 			consumer.Subject = dbConsumer.Subject

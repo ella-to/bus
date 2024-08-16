@@ -75,7 +75,6 @@ func (s *Sqlite) SaveConsumer(ctx context.Context, c *bus.Consumer) (err error) 
 					id,
 					subject,
 					type,
-					ack_strategy,
 					batch_size,
 					acked_count,
 					queue_name,
@@ -83,7 +82,7 @@ func (s *Sqlite) SaveConsumer(ctx context.Context, c *bus.Consumer) (err error) 
 					updated_at
 				) 
 			VALUES 
-				(?, ?, ?, ?, ?, ?, ?, ?, ?)
+				(?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET 
 				acked_count = EXCLUDED.acked_count,
 				last_event_id = EXCLUDED.last_event_id,
@@ -92,7 +91,6 @@ func (s *Sqlite) SaveConsumer(ctx context.Context, c *bus.Consumer) (err error) 
 			c.Id,
 			c.Subject,
 			int64(c.Type),
-			int64(c.AckStrategy),
 			c.BatchSize,
 			c.AckedCount,
 			queueName,

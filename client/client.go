@@ -113,7 +113,6 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 	qs.Set("subject", consumer.Subject)
 	qs.Set("id", consumer.Id)
 	qs.Set("type", consumer.Type.String())
-	qs.Set("ack", consumer.AckStrategy.String())
 	qs.Set("pos", consumer.LastEventId)
 	qs.Set("queue_name", consumer.QueueName)
 	qs.Set("batch_size", fmt.Sprintf("%d", consumer.BatchSize))
@@ -144,7 +143,6 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 	consumer.Id = header.Get("Consumer-Id")
 	consumer.Subject = header.Get("Consumer-Subject")
 	consumer.Type = bus.ParseConsumerType(header.Get("Consumer-Type"), bus.Ephemeral)
-	consumer.AckStrategy = bus.ParseAckStrategy(header.Get("Consumer-Ack-Strategy"), bus.Auto)
 	consumer.BatchSize = bus.ParseBatchSize(header.Get("Consumer-Batch-Size"), 1)
 	consumer.QueueName = header.Get("Consumer-Queue-Name")
 	consumer.LastEventId = header.Get("Consumer-Last-Event-Id")
@@ -170,33 +168,20 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 					return
 				}
 
-				if consumer.AckStrategy != bus.Auto {
-					msg, err = bus.NewMsg(events, bus.WithInitAck(consumer.Id, c))
-					if err != nil {
-						return
+				replyConfirms := make(map[string]struct{})
+				for _, evt := range events {
+					if evt.ReplyCount > 0 && evt.Reply != "" {
+						replyConfirms[evt.Reply] = struct{}{}
 					}
-				} else {
-					msg, err = bus.NewMsg(events)
-					if err != nil {
-						return
-					}
+				}
+
+				msg, err = bus.NewMsg(events, bus.WithInitAck(consumer.Id, replyConfirms, c, c))
+				if err != nil {
+					return
 				}
 
 				if !yield(msg, err) {
 					return
-				}
-
-				for _, evt := range events {
-					if evt.ReplyCount > 0 {
-						confirmEvent, err := bus.NewEvent(bus.WithSubject(evt.Reply), bus.WithData([]byte(`{"type":"confirm"}`)))
-						if err != nil {
-							return
-						}
-						err = c.Put(ctx, confirmEvent)
-						if err != nil {
-							return
-						}
-					}
 				}
 
 			case "error":
@@ -238,7 +223,7 @@ func (c *Client) Ack(ctx context.Context, consumerId, eventId string) error {
 
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusAccepted {
 		b, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,6 +39,7 @@ func TestPut(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 1, len(msg.Events))
 		assert.Equal(t, `"hello"`, string(msg.Events[0].Data))
+		msg.Ack(context.Background())
 		break
 	}
 }
@@ -73,6 +75,8 @@ func Test1000(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 1, len(msg.Events))
 		count++
+
+		msg.Ack(context.Background())
 
 		if count == n {
 			break
@@ -110,11 +114,57 @@ func TestBug3(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 1, len(msg.Events))
 		count++
+		msg.Ack(context.Background())
 
 		if count == 2 {
 			break
 		}
 	}
+}
+
+func TestConfirmConsumer(t *testing.T) {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
+	c := testutil.PrepareTestServer(t)
+
+	var hit int64
+
+	go func() {
+		ctx := context.TODO()
+
+		// NOTE: we need to make sure consumer always starts reading from the oldest
+		// as it could happen that the event can be sent before the consumer starts
+
+		for msg, err := range c.Get(ctx, bus.WithFromOldest(), bus.WithSubject("a.b.c")) {
+			atomic.AddInt64(&hit, 1)
+
+			assert.NoError(t, err)
+			assert.NotNil(t, msg)
+			assert.Len(t, msg.Events, 1)
+
+			evt := msg.Events[0]
+
+			assert.Equal(t, "a.b.c", evt.Subject)
+			assert.Equal(t, `"hello"`, string(evt.Data))
+
+			err = msg.Ack(ctx)
+			assert.NoError(t, err)
+
+			break
+		}
+	}()
+
+	evt, err := bus.NewEvent(bus.WithSubject("a.b.c"), bus.WithConfirm(1), bus.WithData("hello"))
+	assert.NoError(t, err)
+
+	ctx := context.TODO()
+	// ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// defer cancel()
+
+	err = c.Put(ctx, evt)
+
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&hit))
 }
 
 func TestQueue(t *testing.T) {
@@ -147,6 +197,8 @@ func TestQueue(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 1, len(msg.Events))
 		count++
+
+		msg.Ack(context.Background())
 
 		if count == 2 {
 			break

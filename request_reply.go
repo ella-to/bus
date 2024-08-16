@@ -78,7 +78,6 @@ func Reply(ctx context.Context, stream Stream, subject string, fn ReplyFunc) {
 		WithSubject(subject),
 		WithFromNewest(),
 		WithQueue(queueName),
-		WithManualAck(),
 	)
 
 	go func() {

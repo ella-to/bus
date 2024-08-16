@@ -116,26 +116,6 @@ func WithType(t ConsumerType) ConsumerOpt {
 	})
 }
 
-func WithManualAck() ConsumerOpt {
-	return consumerOptFn(func(c *Consumer) error {
-		if c.AckStrategy == Auto {
-			return fmt.Errorf("ack strategy is already set to auto")
-		}
-		c.AckStrategy = Manual
-		return nil
-	})
-}
-
-func WithAutoAck() ConsumerOpt {
-	return consumerOptFn(func(c *Consumer) error {
-		if c.AckStrategy == Manual {
-			return fmt.Errorf("ack strategy is already set to manual")
-		}
-		c.AckStrategy = Auto
-		return nil
-	})
-}
-
 func WithFromOldest() ConsumerOpt {
 	return WithFromEventId(Oldest)
 }
@@ -190,9 +170,11 @@ func WithConfirm(n int64) EventOpt {
 // WithInitAck is an option to initialize the acker for the events
 // NOTE: This option is only used for the client and should not be used
 // directly by the user
-func WithInitAck(consumerId string, acker Acker) MsgOpt {
+func WithInitAck(consumerId string, replyConfirms map[string]struct{}, putter Putter, acker Acker) MsgOpt {
 	return msgOptFn(func(m *Msg) error {
 		m.consumerId = consumerId
+		m.replyConfirms = replyConfirms
+		m.putter = putter
 		m.acker = acker
 		return nil
 	})
@@ -230,8 +212,10 @@ func NewEvent(opts ...EventOpt) (*Event, error) {
 type Msg struct {
 	Events []*Event
 
-	consumerId string
-	acker      Acker
+	consumerId    string
+	acker         Acker
+	putter        Putter
+	replyConfirms map[string]struct{}
 }
 
 func (m *Msg) Ack(ctx context.Context) error {
@@ -239,7 +223,30 @@ func (m *Msg) Ack(ctx context.Context) error {
 		return nil
 	}
 
-	return m.acker.Ack(ctx, m.consumerId, m.Events[len(m.Events)-1].Id)
+	err := m.acker.Ack(ctx, m.consumerId, m.Events[len(m.Events)-1].Id)
+	if err != nil {
+		return err
+	}
+
+	confirmMsg := struct {
+		Type string `json:"type"`
+	}{
+		Type: "confirm",
+	}
+
+	for replySubject := range m.replyConfirms {
+		confirmEvent, err := NewEvent(WithSubject(replySubject), WithData(confirmMsg))
+		if err != nil {
+			return err
+		}
+
+		err = m.putter.Put(ctx, confirmEvent)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func NewMsg(events []*Event, opts ...MsgOpt) (*Msg, error) {
@@ -295,36 +302,6 @@ func ParseConsumerType(s string, defaultType ConsumerType) ConsumerType {
 	}
 }
 
-type AckStrategy int
-
-const (
-	_ AckStrategy = iota
-	Auto
-	Manual
-)
-
-func (s AckStrategy) String() string {
-	switch s {
-	case Auto:
-		return "auto"
-	case Manual:
-		return "manual"
-	default:
-		return "unknown"
-	}
-}
-
-func ParseAckStrategy(s string, defaultStrategy AckStrategy) AckStrategy {
-	switch s {
-	case "auto":
-		return Auto
-	case "manual":
-		return Manual
-	default:
-		return defaultStrategy
-	}
-}
-
 func ParseBatchSize(s string, defaultSize int64) int64 {
 	if s == "" {
 		return defaultSize
@@ -343,7 +320,6 @@ type Consumer struct {
 	Subject     string       `json:"subject"`
 	Type        ConsumerType `json:"type"`
 	QueueName   string       `json:"queue_name"`
-	AckStrategy AckStrategy  `json:"ack_strategy"`
 	BatchSize   int64        `json:"batch_size"`
 	AckedCount  int64        `json:"acked_count"`
 	LastEventId string       `json:"last_event_id"`
@@ -362,10 +338,6 @@ func NewConsumer(opts ...ConsumerOpt) (*Consumer, error) {
 
 	if c.BatchSize <= 0 {
 		c.BatchSize = 1
-	}
-
-	if c.AckStrategy == 0 {
-		c.AckStrategy = Auto
 	}
 
 	if c.Type == 0 {

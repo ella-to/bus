@@ -106,7 +106,6 @@ func (s *Server) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		consumer.Id = bus.GetConsumerId()
 	}
 
-	consumer.AckStrategy = bus.ParseAckStrategy(qs.Get("ack"), bus.Auto)
 	consumer.BatchSize = bus.ParseBatchSize(qs.Get("batch_size"), 1)
 	consumer.LastEventId = qs.Get("pos")
 	consumer.UpdatedAt = time.Now()
@@ -123,7 +122,6 @@ func (s *Server) consumerHandler(w http.ResponseWriter, r *http.Request) {
 		sse.WithHeader("Consumer-Id", consumer.Id),
 		sse.WithHeader("Consumer-Subject", consumer.Subject),
 		sse.WithHeader("Consumer-Type", consumer.Type.String()),
-		sse.WithHeader("Consumer-Ack-Strategy", consumer.AckStrategy.String()),
 		sse.WithHeader("Consumer-Batch-Size", strconv.FormatInt(consumer.BatchSize, 10)),
 		sse.WithHeader("Consumer-Queue-Name", consumer.QueueName),
 		sse.WithHeader("Consumer-Last-Event-Id", consumer.LastEventId),
@@ -149,16 +147,6 @@ func (s *Server) consumerHandler(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				slog.Error("failed to push events", "err", err)
 				return
-			}
-
-			if consumer.AckStrategy == bus.Auto {
-				lastEventId := events[len(events)-1].Id
-				err = s.dispatcher.AckEvent(ctx, consumer.Id, lastEventId)
-				if err != nil {
-					pusher.Push(ctx, "error", err)
-					return
-				}
-				s.dispatcher.PushEvent(ctx, consumer.Id, "")
 			}
 		}
 	}
