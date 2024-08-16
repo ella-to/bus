@@ -19,11 +19,7 @@ jobs:
         id: git_commit
         run: echo "VALUE=$(git rev-list -1 HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Prepare the credentials
-        run: |
-          echo "ELLA_ACCESS_TOKEN=${{ secrets.ELLA_ACCESS_TOKEN }}" > .github/credentials/.env
-
-      - name: build
+      - name: build and deploy
         env:
           VERSION: ${{ steps.tag_version.outputs.VALUE }}
           GIT_COMMIT: ${{ steps.git_commit.outputs.VALUE }}
@@ -33,7 +29,6 @@ jobs:
             --build-arg VERSION=${{ env.VERSION }} \
             --no-cache \
             --progress=plain \
-            --secret id=_env,src=.github/credentials/.env \
             -t ellato/bus:${{ env.VERSION }} -t ellato/bus:latest .
 
           echo ${{ secrets.ELLA_DOCKER_TOKEN }} | docker login -u ellato --password-stdin
