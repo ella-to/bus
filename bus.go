@@ -94,7 +94,7 @@ func WithData(v any) EventOpt {
 		if err != nil {
 			return err
 		}
-		evt.Data = data
+		evt.Data = string(data)
 		return nil
 	})
 }
@@ -114,14 +114,6 @@ func WithType(t ConsumerType) ConsumerOpt {
 		c.Type = t
 		return nil
 	})
-}
-
-func WithEphemeral() ConsumerOpt {
-	return WithType(Ephemeral)
-}
-
-func WithDurable() ConsumerOpt {
-	return WithType(Durable)
 }
 
 func WithManualAck() ConsumerOpt {
@@ -169,7 +161,7 @@ func WithExpiresAt(duration time.Duration) EventOpt {
 func WithId(id string) ConsumerOpt {
 	return consumerOptFn(func(c *Consumer) error {
 		c.Id = id
-		return nil
+		return WithType(Durable).configureConsumer(c)
 	})
 }
 
@@ -211,18 +203,13 @@ func WithInitAck(consumerId string, acker Acker) MsgOpt {
 //
 
 type Event struct {
-	Id         string          `json:"id"`
-	Subject    string          `json:"subject"`
-	Reply      string          `json:"reply_to"`
-	ReplyCount int64           `json:"reply_count"`
-	Size       int64           `json:"size"`
-	Data       json.RawMessage `json:"data"`
-	CreatedAt  time.Time       `json:"created_at"`
-	ExpiresAt  time.Time       `json:"expires_at,omitempty"`
-}
-
-func (e *Event) ParseJsonData(v any) error {
-	return json.Unmarshal(e.Data, v)
+	Id         string    `json:"id"`
+	Subject    string    `json:"subject"`
+	Reply      string    `json:"reply_to"`
+	ReplyCount int64     `json:"reply_count"`
+	Data       string    `json:"data"`
+	CreatedAt  time.Time `json:"created_at"`
+	ExpiresAt  time.Time `json:"expires_at,omitempty"`
 }
 
 func NewEvent(opts ...EventOpt) (*Event, error) {
@@ -381,9 +368,7 @@ func NewConsumer(opts ...ConsumerOpt) (*Consumer, error) {
 		c.AckStrategy = Auto
 	}
 
-	if c.QueueName != "" {
-		c.Type = Queue
-	} else if c.Type == 0 {
+	if c.Type == 0 {
 		c.Type = Ephemeral
 	}
 

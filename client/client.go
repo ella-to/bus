@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -46,7 +45,7 @@ func New(addr string, opts ...clientOpt) *Client {
 func (c *Client) Put(ctx context.Context, evt *bus.Event) error {
 	url := c.addr + "/put"
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(evt.Data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(evt.Data))
 	if err != nil {
 		return err
 	}
@@ -116,6 +115,7 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 	qs.Set("type", consumer.Type.String())
 	qs.Set("ack", consumer.AckStrategy.String())
 	qs.Set("pos", consumer.LastEventId)
+	qs.Set("queue_name", consumer.QueueName)
 	qs.Set("batch_size", fmt.Sprintf("%d", consumer.BatchSize))
 
 	url := c.addr + "/get?" + qs.Encode()
@@ -249,8 +249,8 @@ func (c *Client) Ack(ctx context.Context, consumerId, eventId string) error {
 	return nil
 }
 
-func (c *Client) Close() {
-	c.http.CloseIdleConnections()
+func (c *Client) Close(ctx context.Context, consumerId string) error {
+	return nil
 }
 
 func newIterErr(err error) iter.Seq2[*bus.Msg, error] {

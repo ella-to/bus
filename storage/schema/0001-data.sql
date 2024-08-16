@@ -7,8 +7,7 @@ CREATE TABLE
         subject TEXT NOT NULL,
         reply TEXT,
         reply_count INTEGER NOT NULL DEFAULT 0,
-        size INTEGER NOT NULL,
-        data BLOB,
+        data TEXT,
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL,
         PRIMARY KEY (id)

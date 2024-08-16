@@ -1,8 +1,6 @@
 package storage
 
 import (
-	"fmt"
-
 	"ella.to/bus"
 	"ella.to/sqlite"
 )
@@ -23,22 +21,16 @@ func loadConsumer(stmt *sqlite.Stmt) *bus.Consumer {
 	return c
 }
 
-func loadEvent(stmt *sqlite.Stmt) (e *bus.Event, err error) {
+func loadEvent(stmt *sqlite.Stmt) (e *bus.Event) {
 	e = &bus.Event{}
 
 	e.Id = stmt.GetText("id")
 	e.Subject = stmt.GetText("subject")
 	e.Reply = stmt.GetText("reply")
 	e.ReplyCount = stmt.GetInt64("reply_count")
-	e.Size = stmt.GetInt64("size")
-	e.Data = make([]byte, int(e.Size))
+	e.Data = stmt.GetText("data")
 	e.CreatedAt = sqlite.LoadTime(stmt, "created_at")
 	e.ExpiresAt = sqlite.LoadTime(stmt, "expires_at")
-
-	i := stmt.GetBytes("data", e.Data)
-	if i != int(e.Size) {
-		return nil, fmt.Errorf("data size mismatch: %d != %d", i, e.Size)
-	}
 
 	return
 }
@@ -49,11 +41,7 @@ func loadEvents(stmt *sqlite.Stmt) (events []*bus.Event, err error) {
 			return nil, err
 		}
 
-		event, err := loadEvent(stmt)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, event)
+		events = append(events, loadEvent(stmt))
 	}
 
 	return

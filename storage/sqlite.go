@@ -28,16 +28,15 @@ func (s *Sqlite) SaveEvent(ctx context.Context, events *bus.Event) (err error) {
 
 		stmt, err = conn.Prepare(ctx,
 			`INSERT INTO events 
-			(id, subject, reply, reply_count, size, data, created_at, expires_at) 
+			(id, subject, reply, reply_count, data, created_at, expires_at) 
 			VALUES 
-			(?, ?, ?, ?, ?, ?, ?, ?);`,
+			(?, ?, ?,  ?, ?, ?, ?);`,
 
 			events.Id,
 			events.Subject,
 			events.Reply,
 			events.ReplyCount,
-			events.Size,
-			[]byte(events.Data),
+			events.Data,
 			events.CreatedAt,
 			events.ExpiresAt,
 		)
@@ -67,6 +66,8 @@ func (s *Sqlite) SaveConsumer(ctx context.Context, c *bus.Consumer) (err error) 
 		if c.QueueName != "" {
 			queueName = c.QueueName
 		}
+
+		c.Subject = changeSubjectToPattern(c.Subject)
 
 		stmt, err = conn.Prepare(ctx,
 			`INSERT INTO consumers 
@@ -132,7 +133,7 @@ func (s *Sqlite) LoadEventById(ctx context.Context, eventId string) (event *bus.
 			return
 		}
 
-		event, err = loadEvent(stmt)
+		event = loadEvent(stmt)
 	})
 
 	return
@@ -170,7 +171,7 @@ func (s *Sqlite) LoadNextQueueConsumerByName(ctx context.Context, queueName stri
 		var stmt *sqlite.Stmt
 		var hasRow bool
 
-		stmt, err = conn.Prepare(ctx, `SELECT * FROM consumers WHERE queue_name = ? ORDER BY ack_counts ASC LIMIT 1;`, queueName)
+		stmt, err = conn.Prepare(ctx, `SELECT * FROM consumers WHERE queue_name = ? ORDER BY acked_count ASC LIMIT 1;`, queueName)
 		if err != nil {
 			return
 		}
@@ -199,9 +200,6 @@ func (s *Sqlite) LoadEventsByConsumerId(ctx context.Context, consumerId string) 
 		return
 	}
 
-	pattern := strings.ReplaceAll(consumer.Subject, "*", "%")
-	pattern = strings.ReplaceAll(pattern, ">", "%")
-
 	s.wdb.Submit(func(conn *sqlite.Conn) {
 		var stmt *sqlite.Stmt
 
@@ -212,7 +210,7 @@ func (s *Sqlite) LoadEventsByConsumerId(ctx context.Context, consumerId string) 
 				id > ?
 				ORDER BY id
 				LIMIT ?;`,
-			pattern,
+			consumer.Subject,
 			consumer.LastEventId,
 			consumer.BatchSize,
 		)
@@ -246,7 +244,6 @@ func (s *Sqlite) LoadLastEventId(ctx context.Context) (lastEventId string, err e
 		}
 
 		if !hasRow {
-			err = ErrEventNotFound
 			return
 		}
 
@@ -323,7 +320,21 @@ func (s *Sqlite) Close() error {
 	return s.db.Close()
 }
 
-func NewSqlite(ctx context.Context, workerSize int, opts ...sqlite.OptionFunc) (*Sqlite, error) {
+func NewSqlite(ctx context.Context, path string) (*Sqlite, error) {
+	const queueSize = 2
+	const workerSize = 2
+	const connectionPoolSize = 2
+
+	opts := []sqlite.OptionFunc{
+		sqlite.WithPoolSize(connectionPoolSize),
+	}
+
+	if path != "" {
+		opts = append(opts, sqlite.WithFile(path))
+	} else {
+		opts = append(opts, sqlite.WithMemory())
+	}
+
 	db, err := sqlite.New(opts...)
 	if err != nil {
 		return nil, err
@@ -336,6 +347,12 @@ func NewSqlite(ctx context.Context, workerSize int, opts ...sqlite.OptionFunc) (
 
 	return &Sqlite{
 		db:  db,
-		wdb: sqlite.NewWorker(db, 1000, int64(workerSize)),
+		wdb: sqlite.NewWorker(db, queueSize, workerSize),
 	}, nil
+}
+
+func changeSubjectToPattern(subject string) string {
+	pattern := strings.ReplaceAll(subject, "*", "%")
+	pattern = strings.ReplaceAll(pattern, ">", "%")
+	return pattern
 }

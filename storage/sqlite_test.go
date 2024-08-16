@@ -3,11 +3,11 @@ package storage_test
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
 
-	"ella.to/sqlite"
 	"github.com/stretchr/testify/assert"
 
 	"ella.to/bus"
@@ -35,22 +35,13 @@ func createBasicEvents(t *testing.T, n int) []*bus.Event {
 func createSqliteStorage(t *testing.T, ctx context.Context, path string) *storage.Sqlite {
 	t.Helper()
 
-	workerSize := 10
-
-	ops := []sqlite.OptionFunc{
-		sqlite.WithPoolSize(workerSize),
-	}
-
 	if path != "" {
 		os.Remove(path)
 		os.Remove(path + "-wal")
 		os.Remove(path + "-shm")
-		ops = append(ops, sqlite.WithFile(path))
-	} else {
-		ops = append(ops, sqlite.WithMemory())
 	}
 
-	storage, err := storage.NewSqlite(ctx, workerSize, ops...)
+	storage, err := storage.NewSqlite(ctx, path)
 	assert.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -58,4 +49,18 @@ func createSqliteStorage(t *testing.T, ctx context.Context, path string) *storag
 	})
 
 	return storage
+}
+
+func TestSave1000Events(t *testing.T) {
+	ctx := context.Background()
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
+	storage := createSqliteStorage(t, ctx, "")
+
+	events := createBasicEvents(t, 1000)
+
+	for _, event := range events {
+		err := storage.SaveEvent(ctx, event)
+		assert.NoError(t, err)
+	}
 }

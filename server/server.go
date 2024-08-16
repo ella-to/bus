@@ -13,13 +13,13 @@ import (
 
 type ServerOpt func(*Server)
 
-func WithBufferSize(size int) ServerOpt {
+func WithActionBufferSize(size int) ServerOpt {
 	return func(s *Server) {
 		s.bufferSize = size
 	}
 }
 
-func WithPoolSize(size int) ServerOpt {
+func WithActionPoolSize(size int) ServerOpt {
 	return func(s *Server) {
 		s.poolSize = size
 	}
@@ -33,6 +33,7 @@ func WithDeleteEventFrequency(d time.Duration) ServerOpt {
 
 type Server struct {
 	consumers            *trie.Node[string]
+	queuedConsumers      *trie.Node[string]
 	consumersBatchEvents map[string]chan []*bus.Event
 	storage              storage.Storage
 	dispatcher           *Dispatcher
@@ -50,8 +51,13 @@ func (s *Server) Close() {
 }
 
 func New(ctx context.Context, storage storage.Storage, opts ...ServerOpt) *Server {
+	eq := func(a, b string) bool {
+		return a == b
+	}
+
 	s := &Server{
-		consumers:            trie.New[string](),
+		consumers:            trie.New[string](eq),
+		queuedConsumers:      trie.New[string](eq),
 		consumersBatchEvents: make(map[string]chan []*bus.Event),
 		storage:              storage,
 		mux:                  http.NewServeMux(),

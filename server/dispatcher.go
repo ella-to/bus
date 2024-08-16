@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 
 	"ella.to/bus"
 )
@@ -35,11 +36,11 @@ type Action struct {
 func (a *Action) clean() {
 	a.Type = 0
 	a.Event = nil
-	a.Error = nil
 	a.Ctx = nil
 }
 
 func newAction(isPool bool) *Action {
+	slog.Debug("newAction", "isPool", isPool)
 	return &Action{
 		Error:  make(chan error, 1),
 		isPool: isPool,
@@ -151,6 +152,7 @@ func (d *Dispatcher) run() {
 		case <-d.closeSignal:
 			return
 		case action := <-d.actions:
+			slog.Debug("run", "action", action.Type)
 			switch action.Type {
 			case PutEvent:
 				action.Error <- d.putEventFunc(action.Ctx, action.Event)

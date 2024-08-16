@@ -2,12 +2,16 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"ella.to/bus"
+	"ella.to/bus/storage"
 )
 
 func (s *Server) putEvent(ctx context.Context, event *bus.Event) (err error) {
+	slog.Debug("put event", "event_id", event.Id, "subject", event.Subject)
+
 	err = s.storage.SaveEvent(ctx, event)
 	if err != nil {
 		return err
@@ -17,6 +21,8 @@ func (s *Server) putEvent(ctx context.Context, event *bus.Event) (err error) {
 }
 
 func (s *Server) registerConsumer(ctx context.Context, consumer *bus.Consumer) (<-chan []*bus.Event, error) {
+	slog.Debug("register consumer", "consumer_id", consumer.Id, "subject", consumer.Subject)
+
 	if consumer.LastEventId == bus.Oldest {
 		consumer.LastEventId = ""
 	} else if consumer.LastEventId == bus.Newest {
@@ -27,19 +33,41 @@ func (s *Server) registerConsumer(ctx context.Context, consumer *bus.Consumer) (
 		consumer.LastEventId = lastEventId
 	}
 
+	// Need to check if consumer is durable and has been registered before
+	// Also we need to check if the consumer is alive and a new consumer is registered
+	// with the same id, which means we need to return an error
+
+	if consumer.Type == bus.Durable {
+		dbConsumer, err := s.storage.LoadConsumerById(ctx, consumer.Id)
+		if err != nil && !errors.Is(err, storage.ErrConsumerNotFound) {
+			return nil, err
+		}
+
+		if dbConsumer != nil {
+			if dbConsumer.Type != bus.Durable {
+				return nil, errors.New("consumer already exists")
+			}
+
+			consumer.Type = dbConsumer.Type
+			consumer.LastEventId = dbConsumer.LastEventId
+			consumer.AckStrategy = dbConsumer.AckStrategy
+			consumer.BatchSize = dbConsumer.BatchSize
+			consumer.AckedCount = dbConsumer.AckedCount
+			consumer.Subject = dbConsumer.Subject
+			consumer.UpdatedAt = dbConsumer.UpdatedAt
+		}
+	}
+
 	err := s.storage.SaveConsumer(ctx, consumer)
 	if err != nil {
 		return nil, err
 	}
 
 	if consumer.QueueName == "" {
-		// Delete the old consumer with the same id
-		s.consumers.Del(consumer.Subject, consumer.Id, func(a, b string) bool {
-			return a == b
-		})
-
 		// Put the new one
 		s.consumers.Put(consumer.Subject, consumer.Id)
+	} else {
+		s.queuedConsumers.Put(consumer.Subject, consumer.QueueName)
 	}
 
 	// Create new batch event channel
@@ -55,9 +83,11 @@ func (s *Server) registerConsumer(ctx context.Context, consumer *bus.Consumer) (
 // 2. when a consumer is registered, eventId is emtpy and consumerId is not
 func (s *Server) pushEvent(ctx context.Context, consumerId string, eventId string) {
 	if eventId != "" {
+		slog.Debug("push event", "event_id", eventId)
+
 		event, err := s.storage.LoadEventById(ctx, eventId)
 		if err != nil {
-			slog.Error("failed to load event during pushEvent", "event_id", eventId)
+			slog.Error("failed to load event during pushEvent", "event_id", eventId, "error", err)
 			return
 		}
 
@@ -71,7 +101,24 @@ func (s *Server) pushEvent(ctx context.Context, consumerId string, eventId strin
 
 			batchEvents <- []*bus.Event{event}
 		}
+
+		queueNames := s.queuedConsumers.Get(event.Subject)
+		for _, queueName := range queueNames {
+			consumer, err := s.storage.LoadNextQueueConsumerByName(ctx, queueName)
+			if err != nil {
+				continue
+			}
+
+			batchEvents, ok := s.consumersBatchEvents[consumer.Id]
+			if !ok {
+				continue
+			}
+
+			batchEvents <- []*bus.Event{event}
+		}
 	} else if consumerId != "" {
+		slog.Debug("push consumer", "consumer_id", consumerId)
+
 		consumer, err := s.storage.LoadConsumerById(ctx, consumerId)
 		if err != nil {
 			slog.Error("failed to load consumer during pushEvent", "consumer_id", consumerId)
@@ -88,6 +135,10 @@ func (s *Server) pushEvent(ctx context.Context, consumerId string, eventId strin
 			events, err := s.storage.LoadEventsByConsumerId(ctx, consumer.Id)
 			if err != nil {
 				slog.Error("failed to load events during pushEvent", "consumer_id", consumer.Id)
+				return
+			}
+
+			if len(events) == 0 {
 				return
 			}
 
@@ -125,6 +176,7 @@ func (s *Server) pushEvent(ctx context.Context, consumerId string, eventId strin
 }
 
 func (s *Server) ackEvent(ctx context.Context, consumerId string, eventId string) (err error) {
+	slog.Debug("ack event", "consumer_id", consumerId, "event_id", eventId)
 	//
 	// Update the consumer acked counts and last event id
 	// and if consumer is part of a queue, update all consumers last event id
@@ -138,6 +190,8 @@ func (s *Server) ackEvent(ctx context.Context, consumerId string, eventId string
 }
 
 func (s *Server) deleteConsumer(ctx context.Context, consumerId string) (err error) {
+	slog.Debug("delete consumer", "consumer_id", consumerId)
+
 	err = s.storage.DeleteConsumer(ctx, consumerId)
 	if err != nil {
 		return err

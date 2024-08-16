@@ -37,12 +37,12 @@ func (s *Server) publishHandler(w http.ResponseWriter, r *http.Request) {
 	evt.Reply = r.Header.Get("Event-Reply")
 	evt.ReplyCount = parseInt64(r.Header.Get("Event-Reply-Count"), 0)
 	evt.ExpiresAt = parseDate(r.Header.Get("Event-Expires-At"), bus.GetDefaultExpiresAt())
-	evt.Data, err = io.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	evt.Size = int64(len(evt.Data))
+	evt.Data = string(data)
 	evt.CreatedAt = time.Now()
 
 	err = s.dispatcher.PutEvent(ctx, evt)
@@ -94,14 +94,13 @@ func (s *Server) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	consumer.Id = qs.Get("id")
 	consumer.Type = bus.ParseConsumerType(qs.Get("type"), bus.Ephemeral)
 	consumer.Subject = subject
+	consumer.QueueName = qs.Get("queue_name")
 
 	if consumer.Type == bus.Queue {
-		if consumer.Id == "" {
-			http.Error(w, "missing id for queued consumer", http.StatusBadRequest)
+		if consumer.QueueName == "" {
+			http.Error(w, "missing queue name", http.StatusBadRequest)
 			return
 		}
-
-		consumer.QueueName = consumer.Id
 		consumer.Id = bus.GetConsumerId()
 	} else if consumer.Id == "" {
 		consumer.Id = bus.GetConsumerId()
@@ -192,14 +191,30 @@ func (s *Server) ackedHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+func (s *Server) deleteHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	qs := r.URL.Query()
+
+	consumerId := qs.Get("id")
+
+	err := s.dispatcher.DeleteConsumer(ctx, consumerId)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
 func (s *Server) RegisterHandlers() {
-	s.mux.HandleFunc("POST /put", s.publishHandler) // POST /put
-	s.mux.HandleFunc("GET /get", s.consumerHandler) // GET /get?subject=foo&type=queue&id=bar&pos=oldest|newest|<event_id>&ack=auto|manual&batch_size=1
-	s.mux.HandleFunc("GET /ack", s.ackedHandler)    // GET /ack?consumer_id=123&event_id=456
+	s.mux.HandleFunc("POST /put", s.publishHandler)       // POST /put
+	s.mux.HandleFunc("GET /get", s.consumerHandler)       // GET /get?subject=foo&type=queue&id=bar&pos=oldest|newest|<event_id>&ack=auto|manual&batch_size=1
+	s.mux.HandleFunc("GET /ack", s.ackedHandler)          // GET /ack?consumer_id=123&event_id=456
+	s.mux.HandleFunc("DELETE /consumer", s.deleteHandler) // DELETE /consumer?id=123
 }
 
 func parseDate(s string, defaultValue time.Time) time.Time {
