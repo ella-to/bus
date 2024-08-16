@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -167,7 +169,7 @@ func TestConfirmConsumer(t *testing.T) {
 	assert.Equal(t, int64(1), atomic.LoadInt64(&hit))
 }
 
-func TestQueue(t *testing.T) {
+func TestSequences(t *testing.T) {
 	c := testutil.PrepareTestServer(t)
 
 	evt1, err := bus.NewEvent(
@@ -204,4 +206,66 @@ func TestQueue(t *testing.T) {
 			break
 		}
 	}
+}
+
+func TestQueue(t *testing.T) {
+	c := testutil.PrepareTestServer(t)
+
+	ctx := context.TODO()
+
+	for range 3 {
+		evt, err := bus.NewEvent(
+			bus.WithSubject("a.b.1"),
+			bus.WithData(struct {
+				Name string `json:"name"`
+			}{
+				Name: "John",
+			}),
+		)
+		assert.NoError(t, err)
+		err = c.Put(ctx, evt)
+		assert.NoError(t, err)
+	}
+
+	msg1 := c.Get(ctx, bus.WithSubject("a.b.*"), bus.WithQueue("q1"), bus.WithBatchSize(1), bus.WithFromOldest())
+	msg2 := c.Get(ctx, bus.WithSubject("a.b.*"), bus.WithQueue("q1"), bus.WithBatchSize(1), bus.WithFromOldest())
+
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		count := 0
+		for msg, err := range msg1 {
+			assert.NoError(t, err)
+			err = msg.Ack(ctx)
+			assert.NoError(t, err)
+			count++
+
+			if count == 2 {
+				break
+			}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		count := 0
+		for msg, err := range msg2 {
+			assert.NoError(t, err)
+			err = msg.Ack(ctx)
+			assert.NoError(t, err)
+
+			count++
+			if count == 1 {
+				break
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	// NOTE: we need to make sure no terminating test too fast
+	time.Sleep(1 * time.Second)
 }
