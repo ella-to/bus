@@ -45,15 +45,3 @@ func loadEvents(stmt *sqlite.Stmt) (events []*bus.Event, err error) {
 
 	return
 }
-
-func loadConsumers(stmt *sqlite.Stmt) (consumers []*bus.Consumer, err error) {
-	for hasRow, err := stmt.Step(); hasRow; hasRow, err = stmt.Step() {
-		if err != nil {
-			return nil, err
-		}
-
-		consumers = append(consumers, loadConsumer(stmt))
-	}
-
-	return
-}
