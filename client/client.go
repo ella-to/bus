@@ -65,12 +65,7 @@ func (c *Client) Put(ctx context.Context, evt *bus.Event) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusAccepted {
-		b, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-
-		return fmt.Errorf("%s", string(b))
+		return newErrorFromResp(resp)
 	}
 
 	evt.Id = resp.Header.Get("Event-Id")
@@ -130,12 +125,7 @@ func (c *Client) Get(ctx context.Context, consumerOpts ...bus.ConsumerOpt) iter.
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		b, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return newIterErr(err)
-		}
-
-		return newIterErr(fmt.Errorf("%s", string(b)))
+		return newIterErr(newErrorFromResp(resp))
 	}
 
 	header := resp.Header
@@ -224,11 +214,7 @@ func (c *Client) Ack(ctx context.Context, consumerId, eventId string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusAccepted {
-		b, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("%s", string(b))
+		return newErrorFromResp(resp)
 	}
 
 	return nil
@@ -242,4 +228,13 @@ func newIterErr(err error) iter.Seq2[*bus.Msg, error] {
 	return func(yield func(*bus.Msg, error) bool) {
 		yield(nil, err)
 	}
+}
+
+func newErrorFromResp(resp *http.Response) error {
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	return fmt.Errorf("%s", strings.TrimSpace(string(b)))
 }
