@@ -4,13 +4,12 @@ go 1.23
 
 require (
 	ella.to/sqlite v0.0.6
-	github.com/boltdb/bolt v1.3.1
+	ella.to/sse v0.0.1
 	github.com/rs/xid v1.5.0
 	github.com/stretchr/testify v1.9.0
 )
 
 require (
-	ella.to/sse v0.0.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
