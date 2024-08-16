@@ -3,7 +3,7 @@ module ella.to/bus
 go 1.23
 
 require (
-	ella.to/sqlite v0.0.6
+	ella.to/sqlite v0.0.7
 	ella.to/sse v0.0.1
 	github.com/rs/xid v1.5.0
 	github.com/stretchr/testify v1.9.0

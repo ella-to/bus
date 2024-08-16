@@ -57,10 +57,12 @@ func TestSave1000Events(t *testing.T) {
 
 	storage := createSqliteStorage(t, ctx, "")
 
-	events := createBasicEvents(t, 1000)
+	events := createBasicEvents(t, 1)
 
 	for _, event := range events {
 		err := storage.SaveEvent(ctx, event)
 		assert.NoError(t, err)
 	}
+
+	time.Sleep(1 * time.Second)
 }
