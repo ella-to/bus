@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"iter"
 	"strings"
-	"sync"
+
+	"sync/atomic"
 	"time"
 
 	"ella.to/bus"
@@ -22,8 +23,7 @@ type Sync struct {
 	wdb          *sqlite.Worker
 	busClient    *client.Client
 	mapper       FuncsMap
-	mux          sync.RWMutex
-	locked       bool
+	locked       atomic.Int32
 	subject      string
 	continueName string
 }
@@ -41,20 +41,14 @@ func (s *Sync) Register(subject string, fn Func) {
 }
 
 func (s *Sync) Lock() error {
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	if s.locked {
+	if !s.locked.CompareAndSwap(0, 1) {
 		return fmt.Errorf("event.Sync.Lock already called")
 	}
-
-	s.locked = true
 	return nil
 }
 
 func (s *Sync) IsLocked() bool {
-	s.mux.RLock()
-	defer s.mux.RUnlock()
-	return s.locked
+	return s.locked.Load() == 1
 }
 
 func (s *Sync) Once(ctx context.Context, wait time.Duration) error {

@@ -156,6 +156,7 @@ func (s *Sqlite) LoadConsumerById(ctx context.Context, consumerId string) (consu
 
 		if !hasRow {
 			err = ErrConsumerNotFound
+			return
 		}
 
 		consumer = loadConsumer(stmt)
