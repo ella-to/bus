@@ -8,7 +8,9 @@ import (
 )
 
 func TestTrie(t *testing.T) {
-	tree := trie.New[int]()
+	tree := trie.New[int](func(i1, i2 int) bool {
+		return i1 == i2
+	})
 
 	tree.Put("a.b.c", 1)
 	tree.Put("a.b.*", 2)
@@ -27,14 +29,25 @@ func TestTrie(t *testing.T) {
 	assert.Contains(t, values, 2)
 	assert.Contains(t, values, 3)
 
-	tree.Del("a.b.c", 1, func(i1, i2 int) bool {
-		return i1 == i2
-	})
+	tree.Del("a.b.c", 1)
 
 	values = tree.Get("a.b.c")
 
 	assert.Len(t, values, 2)
 	assert.Contains(t, values, 2)
 	assert.Contains(t, values, 3)
+}
 
+func TestDedupTrie(t *testing.T) {
+	tree := trie.New[int](func(i1, i2 int) bool {
+		return i1 == i2
+	})
+
+	tree.Put("a.b.c", 1)
+	tree.Put("a.b.c", 1)
+
+	values := tree.Get("a.b.c")
+
+	assert.Len(t, values, 1)
+	assert.Contains(t, values, 1)
 }
