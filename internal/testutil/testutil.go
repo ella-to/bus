@@ -12,12 +12,32 @@ import (
 	"ella.to/bus/storage"
 )
 
-func PrepareTestServer(t *testing.T) *client.Client {
+type options struct {
+	databasePath string
+}
+
+type optionFn func(*options)
+
+func WithDatabasePath(path string) optionFn {
+	return func(o *options) {
+		o.databasePath = path
+	}
+}
+
+func PrepareTestServer(t *testing.T, optFns ...optionFn) *client.Client {
 	t.Helper()
 
 	ctx := context.Background()
 
-	storage, err := storage.NewSqlite(ctx, "")
+	opts := options{
+		databasePath: "",
+	}
+
+	for _, fn := range optFns {
+		fn(&opts)
+	}
+
+	storage, err := storage.NewSqlite(ctx, opts.databasePath)
 	assert.NoError(t, err)
 
 	server := server.New(ctx, storage)

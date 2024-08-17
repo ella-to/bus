@@ -56,6 +56,9 @@ func (s *Sync) Once(ctx context.Context, wait time.Duration) error {
 		return fmt.Errorf("event.Sync.Once should be called after event.Sync.Lock")
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	pull, stop := iter.Pull2(s.busClient.Get(
 		ctx,
 		bus.WithBatchSize(10),
@@ -63,7 +66,10 @@ func (s *Sync) Once(ctx context.Context, wait time.Duration) error {
 		bus.WithFromOldest(),
 		bus.WithSubject(s.subject),
 	))
-	defer stop()
+	defer func() {
+		cancel()
+		stop()
+	}()
 
 	timer := time.AfterFunc(wait, stop)
 
