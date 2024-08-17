@@ -86,6 +86,11 @@ func (s *Sync) Once(ctx context.Context, wait time.Duration) error {
 				}
 			}
 		}
+
+		err = msg.Ack(ctx)
+		if err != nil {
+			return err
+		}
 	}
 }
 
@@ -112,6 +117,11 @@ func (s *Sync) Continue(ctx context.Context) error {
 					return err
 				}
 			}
+		}
+
+		err = msg.Ack(ctx)
+		if err != nil {
+			return err
 		}
 	}
 
