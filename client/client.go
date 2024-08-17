@@ -55,7 +55,7 @@ func (c *Client) Put(ctx context.Context, evt *bus.Event) error {
 	header.Set("Event-Subject", evt.Subject)
 	header.Set("Event-Reply", evt.Reply)
 	header.Set("Event-Reply-Count", strconv.FormatInt(evt.ReplyCount, 10))
-	header.Set("Event-Expires-At", evt.ExpiresAt.Format("2006-01-02T15:04:05"))
+	header.Set("Event-Expires-At", evt.ExpiresAt.Format(time.RFC3339))
 
 	resp, err := c.http.Do(req)
 	if err != nil {
