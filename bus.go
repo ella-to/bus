@@ -319,6 +319,7 @@ type Consumer struct {
 	Id          string       `json:"id"`
 	Subject     string       `json:"subject"`
 	Type        ConsumerType `json:"type"`
+	Online      bool         `json:"online"`
 	QueueName   string       `json:"queue_name"`
 	BatchSize   int64        `json:"batch_size"`
 	AckedCount  int64        `json:"acked_count"`

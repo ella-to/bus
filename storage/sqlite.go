@@ -75,6 +75,7 @@ func (s *Sqlite) SaveConsumer(ctx context.Context, c *bus.Consumer) (err error) 
 					id,
 					subject,
 					type,
+					online,
 					batch_size,
 					acked_count,
 					queue_name,
@@ -82,8 +83,9 @@ func (s *Sqlite) SaveConsumer(ctx context.Context, c *bus.Consumer) (err error) 
 					updated_at
 				) 
 			VALUES 
-				(?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET 
+				(?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				online = EXCLUDED.online,
 				acked_count = EXCLUDED.acked_count,
 				last_event_id = EXCLUDED.last_event_id,
 				updated_at = EXCLUDED.updated_at
@@ -91,6 +93,7 @@ func (s *Sqlite) SaveConsumer(ctx context.Context, c *bus.Consumer) (err error) 
 			c.Id,
 			c.Subject,
 			int64(c.Type),
+			c.Online,
 			c.BatchSize,
 			c.AckedCount,
 			queueName,
@@ -170,7 +173,7 @@ func (s *Sqlite) LoadNextQueueConsumerByName(ctx context.Context, queueName stri
 		var stmt *sqlite.Stmt
 		var hasRow bool
 
-		stmt, err = conn.Prepare(ctx, `SELECT * FROM consumers WHERE queue_name = ? ORDER BY acked_count ASC LIMIT 1;`, queueName)
+		stmt, err = conn.Prepare(ctx, `SELECT * FROM consumers WHERE queue_name = ? AND online = 1 ORDER BY acked_count ASC LIMIT 1;`, queueName)
 		if err != nil {
 			return
 		}

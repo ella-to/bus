@@ -27,6 +27,7 @@ CREATE TABLE
         id TEXT NOT NULL,
         subject TEXT NOT NULL,
         type INTEGER NOT NULL,
+        online INTEGER NOT NULL,
         batch_size INTEGER NOT NULL DEFAULT 1,
         queue_name TEXT, -- <- queue name, can be null
         acked_count INTEGER NOT NULL DEFAULT 0,

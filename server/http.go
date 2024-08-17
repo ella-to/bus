@@ -68,6 +68,10 @@ func (s *Server) consumerHandler(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		// delete consumer if it's ephemeral or queue consumer
 		if consumer.Id == "" || consumer.Type == bus.Durable {
+			err := s.dispatcher.OfflineConsumer(context.Background(), consumer.Id)
+			if err != nil {
+				slog.Error("failed to offline consumer", "consumer_id", consumer.Id)
+			}
 			return
 		}
 

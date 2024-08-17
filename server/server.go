@@ -81,6 +81,7 @@ func New(ctx context.Context, storage storage.Storage, opts ...ServerOpt) *Serve
 		withAckEventFunc(s.ackEvent),
 		withDeleteConsumerFunc(s.deleteConsumer),
 		withDeleteExpiredEventsFunc(s.deleteExpiredEvents),
+		withOfflineConsumerFunc(s.offlineConsumer),
 	)
 
 	s.RegisterHandlers()

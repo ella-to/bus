@@ -17,6 +17,7 @@ const (
 	AckEvent                       // AckEvent is used to acknowledge an event
 	DeleteConsumer                 // DeleteConsumer is used to delete a consumer
 	DeleteExpiredEvents            // DeleteExpiredEvents is used to delete expired events
+	OfflineConsumer                // OfflineConsumer is used to set a consumer offline
 	Cleanup                        // Cleanup is used to clean up the bus for expired events and consumers
 )
 
@@ -58,6 +59,7 @@ type Dispatcher struct {
 	ackEventFunc         func(ctx context.Context, consumerId string, eventId string) error
 	deleteConsumerFunc   func(ctx context.Context, consumerId string) error
 	deleteExpiredEvents  func(ctx context.Context) error
+	offlinceConsumerFunc func(ctx context.Context, consumerId string) error
 }
 
 func (d *Dispatcher) PutEvent(ctx context.Context, evt *bus.Event) error {
@@ -130,6 +132,17 @@ func (d *Dispatcher) DeleteExpiredEvents(ctx context.Context) error {
 	return <-action.Error
 }
 
+func (d *Dispatcher) OfflineConsumer(ctx context.Context, consumerId string) error {
+	action := d.getAction()
+	action.Type = OfflineConsumer
+	action.ConsumerId = consumerId
+	action.Ctx = ctx
+
+	d.pushAction(action)
+
+	return <-action.Error
+}
+
 func (d *Dispatcher) getAction() *Action {
 	select {
 	case action := <-d.actionsPool:
@@ -168,6 +181,8 @@ func (d *Dispatcher) run() {
 				action.Error <- d.deleteConsumerFunc(action.Ctx, action.ConsumerId)
 			case DeleteExpiredEvents:
 				action.Error <- d.deleteExpiredEvents(action.Ctx)
+			case OfflineConsumer:
+				action.Error <- d.offlinceConsumerFunc(action.Ctx, action.ConsumerId)
 			}
 
 			action.clean()
@@ -221,6 +236,12 @@ func withDeleteExpiredEventsFunc(fn func(context.Context) error) dipatcherOpt {
 	}
 }
 
+func withOfflineConsumerFunc(fn func(context.Context, string) error) dipatcherOpt {
+	return func(d *Dispatcher) {
+		d.offlinceConsumerFunc = fn
+	}
+}
+
 func NewDispatcher(bufferSize int, poolSize int, fns ...dipatcherOpt) *Dispatcher {
 	d := &Dispatcher{
 		actions:     make(chan *Action, bufferSize),
@@ -254,6 +275,10 @@ func NewDispatcher(bufferSize int, poolSize int, fns ...dipatcherOpt) *Dispatche
 
 	if d.deleteExpiredEvents == nil {
 		panic("deleteExpiredEvents is required")
+	}
+
+	if d.offlinceConsumerFunc == nil {
+		panic("offlinceConsumerFunc is required")
 	}
 
 	for i := 0; i < poolSize; i++ {

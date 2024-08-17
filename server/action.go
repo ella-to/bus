@@ -33,6 +33,8 @@ func (s *Server) registerConsumer(ctx context.Context, consumer *bus.Consumer) (
 		consumer.LastEventId = lastEventId
 	}
 
+	consumer.Online = true
+
 	// Need to check if consumer is durable and has been registered before
 	// Also we need to check if the consumer is alive and a new consumer is registered
 	// with the same id, which means we need to return an error
@@ -201,6 +203,22 @@ func (s *Server) deleteConsumer(ctx context.Context, consumerId string) (err err
 
 func (s *Server) deleteExpiredEvents(ctx context.Context) (err error) {
 	err = s.storage.DeleteExpiredEvents(ctx)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Server) offlineConsumer(ctx context.Context, consumerId string) (err error) {
+	consumer, err := s.storage.LoadConsumerById(ctx, consumerId)
+	if err != nil {
+		return err
+	}
+
+	consumer.Online = false
+
+	err = s.storage.SaveConsumer(ctx, consumer)
 	if err != nil {
 		return err
 	}

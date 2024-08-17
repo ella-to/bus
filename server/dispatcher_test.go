@@ -27,6 +27,9 @@ func TestDispatcher(t *testing.T) {
 	deleteExpiredEvents := func(ctx context.Context) error {
 		return nil
 	}
+	offlineConsumerFunc := func(ctx context.Context, consumerId string) error {
+		return nil
+	}
 
 	dispatcher := NewDispatcher(
 		1,
@@ -38,6 +41,7 @@ func TestDispatcher(t *testing.T) {
 		withAckEventFunc(ackEventFunc),
 		withDeleteConsumerFunc(deleteConsumerFunc),
 		withDeleteExpiredEventsFunc(deleteExpiredEvents),
+		withOfflineConsumerFunc(offlineConsumerFunc),
 	)
 
 	n := 100
