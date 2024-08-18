@@ -67,8 +67,6 @@ func (s *Sqlite) SaveConsumer(ctx context.Context, c *bus.Consumer) (err error) 
 			queueName = c.QueueName
 		}
 
-		c.Subject = changeSubjectToPattern(c.Subject)
-
 		stmt, err = conn.Prepare(ctx,
 			`INSERT INTO consumers 
 				(
@@ -201,6 +199,8 @@ func (s *Sqlite) LoadEventsByConsumerId(ctx context.Context, consumerId string) 
 	if err != nil {
 		return
 	}
+
+	consumer.Subject = changeSubjectToPattern(consumer.Subject)
 
 	s.wdb.Submit(func(conn *sqlite.Conn) {
 		var stmt *sqlite.Stmt

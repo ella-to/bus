@@ -29,8 +29,8 @@ type Sync struct {
 }
 
 func (s *Sync) Register(subject string, fn Func) {
-	if strings.Contains(subject, "*") {
-		panic("subject should not contains * in event.Sync.Register")
+	if strings.Contains(subject, "*") || strings.Contains(subject, ">") {
+		panic("subject should not contains * or > in event.Sync.Register")
 	}
 
 	if s.IsLocked() {
