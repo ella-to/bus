@@ -45,6 +45,8 @@ func TestEventSync(t *testing.T) {
 	}()
 	assert.NoError(t, err)
 
+	time.Sleep(1 * time.Second)
+
 	evt, err := bus.NewEvent(
 		bus.WithSubject("test.1"),
 		bus.WithData(struct {

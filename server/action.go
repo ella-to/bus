@@ -223,5 +223,7 @@ func (s *Server) offlineConsumer(ctx context.Context, consumerId string) (err er
 		return err
 	}
 
+	s.consumers.Del(consumer.Subject, consumerId)
+
 	return nil
 }
