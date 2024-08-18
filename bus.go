@@ -235,7 +235,11 @@ func (m *Msg) Ack(ctx context.Context) error {
 	}
 
 	for replySubject := range m.replyConfirms {
-		confirmEvent, err := NewEvent(WithSubject(replySubject), WithData(confirmMsg))
+		confirmEvent, err := NewEvent(
+			WithSubject(replySubject),
+			WithData(confirmMsg),
+			WithExpiresAt(30*time.Second),
+		)
 		if err != nil {
 			return err
 		}
