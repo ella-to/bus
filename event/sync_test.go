@@ -7,25 +7,20 @@ import (
 	"time"
 
 	"ella.to/bus"
+	"ella.to/bus/bustest"
 	"ella.to/bus/event"
-	"ella.to/bus/internal/testutil"
-	"ella.to/sqlite"
+
 	"github.com/stretchr/testify/assert"
 )
 
 func TestEventSync(t *testing.T) {
-	t.Skip("skipping test becase race test failed on this")
-
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
-	client := testutil.PrepareTestServer(
-		t,
-		testutil.WithDatabasePath("./test.db"),
-	)
+	client := bustest.GetNatsClient(t)
 
-	s := event.NewSync(nil, client, event.WithSubject("test.>"))
+	s := event.NewSync(client, event.WithSubject("test.>"))
 
-	s.Register("test.1", func(ctx context.Context, wdb *sqlite.Worker, evt *bus.Event) error {
+	s.Register("test.1", func(ctx context.Context, evt *bus.Event) error {
 		return nil
 	})
 
@@ -34,8 +29,6 @@ func TestEventSync(t *testing.T) {
 	assert.NoError(t, err)
 
 	ctx := context.Background()
-	// ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	// defer cancel()
 
 	go func() {
 		err := s.Continue(ctx)
@@ -45,20 +38,16 @@ func TestEventSync(t *testing.T) {
 	}()
 	assert.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
-
-	evt, err := bus.NewEvent(
+	err = client.Put(
+		context.Background(),
 		bus.WithSubject("test.1"),
-		bus.WithData(struct {
-			Name string `json:"name"`
-		}{
-			Name: "test name",
-		}),
+		bus.WithData(
+			struct {
+				Name string `json:"name"`
+			}{
+				Name: "test name",
+			},
+		),
 	)
 	assert.NoError(t, err)
-
-	err = client.Put(context.Background(), evt)
-	assert.NoError(t, err)
-
-	time.Sleep(2 * time.Second)
 }
