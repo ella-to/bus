@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -214,7 +215,7 @@ func (n *NatsClient) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, 
 }
 
 func (n *NatsClient) Request(ctx context.Context, subject string, data any) (json.RawMessage, error) {
-	requestSubject := fmt.Sprintf("%s%s", natsRequestSubjectPrefix, subject)
+	requestSubject := natsRequestSubjectPrefix + subject
 	replySubject := newID(natsReplySubjectPrefix)
 
 	var payload []byte
@@ -229,10 +230,10 @@ func (n *NatsClient) Request(ctx context.Context, subject string, data any) (jso
 		}
 	}
 
-	replyConsumerName := newID("reply-consumer-")
+	requestConsumerName := newID("request-consumer-")
 
 	consumer, err := n.reqestReplyStream.CreateConsumer(ctx, jetstream.ConsumerConfig{
-		Name:          replyConsumerName,
+		Name:          requestConsumerName,
 		FilterSubject: replySubject,
 	})
 	if err != nil {
@@ -240,9 +241,9 @@ func (n *NatsClient) Request(ctx context.Context, subject string, data any) (jso
 	}
 
 	defer func() {
-		err = n.reqestReplyStream.DeleteConsumer(ctx, replyConsumerName)
+		err = n.reqestReplyStream.DeleteConsumer(ctx, requestConsumerName)
 		if err != nil {
-			slog.Error("failed to delete consumer", "name", replyConsumerName, "error", err)
+			slog.Error("failed to delete consumer", "name", requestConsumerName, "error", err)
 			return
 		}
 	}()
@@ -299,11 +300,11 @@ func (n *NatsClient) Request(ctx context.Context, subject string, data any) (jso
 }
 
 func (n *NatsClient) Reply(ctx context.Context, subject string, fn func(ctx context.Context, req json.RawMessage) (out any, err error)) error {
-	requestSubject := fmt.Sprintf("%s%s", natsRequestSubjectPrefix, subject)
+	requestSubject := natsRequestSubjectPrefix + subject
 
-	replyConsumerName := newID("reply-consumer-")
+	replyConsumerName := "reply-consumer-" + strings.ReplaceAll(subject, ".", "-")
 
-	consumer, err := n.reqestReplyStream.CreateConsumer(ctx, jetstream.ConsumerConfig{
+	consumer, err := n.reqestReplyStream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
 		Name:          replyConsumerName,
 		FilterSubject: requestSubject,
 	})
