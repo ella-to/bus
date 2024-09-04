@@ -38,9 +38,7 @@ type NatsClient struct {
 	reqestReplyStream jetstream.Stream
 }
 
-var _ Putter = (*NatsClient)(nil)
-var _ Getter = (*NatsClient)(nil)
-var _ RequestReplier = (*NatsClient)(nil)
+var _ Bus = (*NatsClient)(nil)
 
 func (n *NatsClient) Put(ctx context.Context, opts ...PutOpt) error {
 	opt := &putOpt{}

@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"iter"
 	"strings"
 
@@ -61,6 +62,13 @@ type ReplyFunc func(ctx context.Context, req json.RawMessage) (any, error)
 type RequestReplier interface {
 	Request(ctx context.Context, subject string, data any) (json.RawMessage, error)
 	Reply(ctx context.Context, subject string, fn ReplyFunc) error
+}
+
+type Bus interface {
+	Putter
+	Getter
+	RequestReplier
+	io.Closer
 }
 
 // options
