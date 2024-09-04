@@ -11,17 +11,14 @@ import (
 	"time"
 
 	"ella.to/bus"
-	"ella.to/bus/client"
-	"ella.to/sqlite"
 )
 
-type Func func(ctx context.Context, wdb *sqlite.Worker, evt *bus.Event) error
+type Func func(ctx context.Context, evt *bus.Event) error
 
 type FuncsMap map[string][]Func
 
 type Sync struct {
-	wdb          *sqlite.Worker
-	busClient    *client.Client
+	getter       bus.Getter
 	mapper       FuncsMap
 	locked       atomic.Int32
 	subject      string
@@ -59,10 +56,10 @@ func (s *Sync) Once(ctx context.Context, wait time.Duration) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	pull, stop := iter.Pull2(s.busClient.Get(
+	pull, stop := iter.Pull2(s.getter.Get(
 		ctx,
-		bus.WithBatchSize(10),
-		bus.WithId("event.sync.once"),
+		bus.WithBatchSize(1),
+		bus.WithName("bus-event-sync-once"),
 		bus.WithFromOldest(),
 		bus.WithSubject(s.subject),
 	))
@@ -84,16 +81,14 @@ func (s *Sync) Once(ctx context.Context, wait time.Duration) error {
 			return err
 		}
 
-		for _, evt := range msg.Events {
-			for _, fn := range s.mapper[evt.Subject] {
-				err := fn(ctx, s.wdb, evt)
-				if err != nil {
-					return err
-				}
+		for _, fn := range s.mapper[msg.Subject] {
+			err := fn(ctx, msg)
+			if err != nil {
+				return err
 			}
 		}
 
-		err = msg.Ack(ctx)
+		err = msg.Ack()
 		if err != nil {
 			return err
 		}
@@ -105,10 +100,10 @@ func (s *Sync) Continue(ctx context.Context) error {
 		return fmt.Errorf("event.Sync.Once should be called after event.Sync.Lock")
 	}
 
-	for msg, err := range s.busClient.Get(
+	for msg, err := range s.getter.Get(
 		ctx,
 		bus.WithBatchSize(10),
-		bus.WithId(s.continueName),
+		bus.WithName(s.continueName),
 		bus.WithFromNewest(),
 		bus.WithSubject(s.subject),
 	) {
@@ -116,16 +111,14 @@ func (s *Sync) Continue(ctx context.Context) error {
 			return err
 		}
 
-		for _, evt := range msg.Events {
-			for _, fn := range s.mapper[evt.Subject] {
-				err := fn(ctx, s.wdb, evt)
-				if err != nil {
-					return err
-				}
+		for _, fn := range s.mapper[msg.Subject] {
+			err := fn(ctx, msg)
+			if err != nil {
+				return err
 			}
 		}
 
-		err = msg.Ack(ctx)
+		err = msg.Ack()
 		if err != nil {
 			return err
 		}
@@ -156,13 +149,12 @@ func WithContinueName(name string) syncOption {
 	})
 }
 
-func NewSync(wdb *sqlite.Worker, busClient *client.Client, opts ...syncOption) *Sync {
+func NewSync(getter bus.Getter, opts ...syncOption) *Sync {
 	sync := &Sync{
-		wdb:          wdb,
 		mapper:       make(FuncsMap),
-		busClient:    busClient,
+		getter:       getter,
 		subject:      "*",
-		continueName: "event.sync.continue",
+		continueName: "bus-event-sync-continue",
 	}
 
 	for _, opt := range opts {
@@ -172,14 +164,14 @@ func NewSync(wdb *sqlite.Worker, busClient *client.Client, opts ...syncOption) *
 	return sync
 }
 
-func FnDB[T any](fn func(context.Context, *sqlite.Worker, *T) error) Func {
-	return func(ctx context.Context, wdb *sqlite.Worker, evt *bus.Event) error {
+func FnDB[T any](fn func(context.Context, *T) error) Func {
+	return func(ctx context.Context, evt *bus.Event) error {
 		var obj T
 		err := json.Unmarshal([]byte(evt.Data), &obj)
 		if err != nil {
 			return err
 		}
 
-		return fn(ctx, wdb, &obj)
+		return fn(ctx, &obj)
 	}
 }
