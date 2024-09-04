@@ -57,11 +57,9 @@ type Getter interface {
 	Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, error]
 }
 
-type ReplyFunc func(ctx context.Context, req json.RawMessage) (any, error)
-
 type RequestReplier interface {
 	Request(ctx context.Context, subject string, data any) (json.RawMessage, error)
-	Reply(ctx context.Context, subject string, fn ReplyFunc) error
+	Reply(ctx context.Context, subject string, fn func(ctx context.Context, req json.RawMessage) (out any, err error)) error
 }
 
 type Bus interface {

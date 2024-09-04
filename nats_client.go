@@ -298,7 +298,7 @@ func (n *NatsClient) Request(ctx context.Context, subject string, data any) (jso
 	}
 }
 
-func (n *NatsClient) Reply(ctx context.Context, subject string, fn ReplyFunc) error {
+func (n *NatsClient) Reply(ctx context.Context, subject string, fn func(ctx context.Context, req json.RawMessage) (out any, err error)) error {
 	requestSubject := fmt.Sprintf("%s%s", natsRequestSubjectPrefix, subject)
 
 	replyConsumerName := newID("reply-consumer-")
