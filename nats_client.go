@@ -85,7 +85,7 @@ func (n *NatsClient) Put(ctx context.Context, opts ...PutOpt) error {
 		}
 
 		defer func() {
-			err = n.confirmStream.DeleteConsumer(ctx, confirmConsumerName)
+			err = n.confirmStream.DeleteConsumer(context.WithoutCancel(ctx), confirmConsumerName)
 			if err != nil {
 				slog.Error("failed to delete consumer", "name", confirmConsumerName, "error", err)
 				return
@@ -165,7 +165,7 @@ func (n *NatsClient) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, 
 	return func(yield func(*Event, error) bool) {
 		if durableName == "" {
 			defer func() {
-				err = n.stream.DeleteConsumer(ctx, name)
+				err = n.stream.DeleteConsumer(context.WithoutCancel(ctx), name)
 				if err != nil {
 					slog.Error("failed to delete consumer", "name", name, "error", err)
 					return
@@ -174,6 +174,12 @@ func (n *NatsClient) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, 
 		}
 
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			msgs, err := consumer.Fetch(opt.batchSize, jetstream.FetchMaxWait(5*time.Second))
 			if errors.Is(err, jetstream.ErrNoMessages) {
 				continue
@@ -241,7 +247,7 @@ func (n *NatsClient) Request(ctx context.Context, subject string, data any) (jso
 	}
 
 	defer func() {
-		err = n.reqestReplyStream.DeleteConsumer(ctx, requestConsumerName)
+		err = n.reqestReplyStream.DeleteConsumer(context.WithoutCancel(ctx), requestConsumerName)
 		if err != nil {
 			slog.Error("failed to delete consumer", "name", requestConsumerName, "error", err)
 			return
@@ -314,7 +320,7 @@ func (n *NatsClient) Reply(ctx context.Context, subject string, fn func(ctx cont
 
 	go func() {
 		defer func() {
-			err := n.reqestReplyStream.DeleteConsumer(ctx, replyConsumerName)
+			err := n.reqestReplyStream.DeleteConsumer(context.WithoutCancel(ctx), replyConsumerName)
 			if err != nil {
 				slog.Error("failed to delete consumer", "name", replyConsumerName, "error", err)
 				return
