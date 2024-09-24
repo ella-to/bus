@@ -64,7 +64,7 @@ func (s *Sync) Start(ctx context.Context, onceTimeout time.Duration) error {
 	go func() {
 		err = s.Continue(ctx)
 		if err != nil {
-			slog.Error("event sync has an error", "err", err)
+			slog.ErrorContext(ctx, "event sync has an error", "err", err)
 			return
 		}
 	}()

@@ -87,7 +87,7 @@ func (n *NatsClient) Put(ctx context.Context, opts ...PutOpt) error {
 		defer func() {
 			err = n.confirmStream.DeleteConsumer(context.WithoutCancel(ctx), confirmConsumerName)
 			if err != nil {
-				slog.Error("failed to delete consumer", "name", confirmConsumerName, "error", err)
+				slog.ErrorContext(ctx, "failed to delete consumer", "name", confirmConsumerName, "error", err)
 				return
 			}
 		}()
@@ -167,7 +167,7 @@ func (n *NatsClient) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, 
 			defer func() {
 				err = n.stream.DeleteConsumer(context.WithoutCancel(ctx), name)
 				if err != nil {
-					slog.Error("failed to delete consumer", "name", name, "error", err)
+					slog.ErrorContext(ctx, "failed to delete consumer", "name", name, "error", err)
 					return
 				}
 			}()
@@ -249,7 +249,7 @@ func (n *NatsClient) Request(ctx context.Context, subject string, data any) (jso
 	defer func() {
 		err = n.reqestReplyStream.DeleteConsumer(context.WithoutCancel(ctx), requestConsumerName)
 		if err != nil {
-			slog.Error("failed to delete consumer", "name", requestConsumerName, "error", err)
+			slog.ErrorContext(ctx, "failed to delete consumer", "name", requestConsumerName, "error", err)
 			return
 		}
 	}()
@@ -322,7 +322,7 @@ func (n *NatsClient) Reply(ctx context.Context, subject string, fn func(ctx cont
 		defer func() {
 			err := n.reqestReplyStream.DeleteConsumer(context.WithoutCancel(ctx), replyConsumerName)
 			if err != nil {
-				slog.Error("failed to delete consumer", "name", replyConsumerName, "error", err)
+				slog.ErrorContext(ctx, "failed to delete consumer", "name", replyConsumerName, "error", err)
 				return
 			}
 		}()
@@ -340,7 +340,7 @@ func (n *NatsClient) Reply(ctx context.Context, subject string, fn func(ctx cont
 			} else if errors.Is(err, nats.ErrConnectionDraining) {
 				return
 			} else if err != nil {
-				slog.Error("failed to fetch message", "error", err)
+				slog.ErrorContext(ctx, "failed to fetch message", "error", err)
 				return
 			}
 
@@ -351,7 +351,7 @@ func (n *NatsClient) Reply(ctx context.Context, subject string, fn func(ctx cont
 
 			err = msg.Ack()
 			if err != nil {
-				slog.Error("failed to ack message", "error", err)
+				slog.ErrorContext(ctx, "failed to ack message", "error", err)
 				return
 			}
 
@@ -373,13 +373,13 @@ func (n *NatsClient) Reply(ctx context.Context, subject string, fn func(ctx cont
 
 			data, err := json.Marshal(result)
 			if err != nil {
-				slog.Error("failed to marshal data", "error", err)
+				slog.ErrorContext(ctx, "failed to marshal data", "error", err)
 				return
 			}
 
 			_, err = n.js.Publish(ctx, replySubject, data)
 			if err != nil {
-				slog.Error("failed to publish data", "error", err)
+				slog.ErrorContext(ctx, "failed to publish data", "error", err)
 				return
 			}
 		}

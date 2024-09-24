@@ -22,8 +22,13 @@ type Event struct {
 	ReplySubject string
 	Data         json.RawMessage
 
+	ctx     context.Context
 	replyFn func(data []byte) error
 	ackFn   func() error
+}
+
+func (e *Event) Context() context.Context {
+	return e.ctx
 }
 
 func (e *Event) Reply(v any) error {

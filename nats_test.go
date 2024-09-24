@@ -130,7 +130,20 @@ func TestNatsRequestReply(t *testing.T) {
 		Result int
 	}
 
-	err := client.Reply(ctx, "test.add", func(ctx context.Context, req json.RawMessage) (any, error) {
+	topic := "ella.rpc.notifications_service.send_email"
+
+	err := client.Reply(ctx, topic, func(ctx context.Context, req json.RawMessage) (any, error) {
+		var r request
+		err := json.Unmarshal(req, &r)
+		if err != nil {
+			return nil, err
+		}
+
+		return reply{Result: r.A + r.B}, nil
+	})
+	assert.NoError(t, err)
+
+	err = client.Reply(ctx, topic, func(ctx context.Context, req json.RawMessage) (any, error) {
 		var r request
 		err := json.Unmarshal(req, &r)
 		if err != nil {
@@ -142,7 +155,7 @@ func TestNatsRequestReply(t *testing.T) {
 	assert.NoError(t, err)
 
 	for range 100 {
-		result, err := client.Request(ctx, "test.add", request{A: 1, B: 2})
+		result, err := client.Request(ctx, topic, request{A: 1, B: 2})
 		assert.NoError(t, err)
 
 		var r reply
