@@ -1,0 +1,8 @@
+ella.to/immuta v0.0.2 h1:8wqXxj8rPVerE/w4weLmcEqgzf6skccm2rxgSm8R3so=
+ella.to/immuta v0.0.2/go.mod h1:hnS1IfO+dH5a74oa1GobALX1jQkT5iHK2/yLwKELQjU=
+ella.to/sse v0.0.3 h1:+A/L1S/FpCMl4URBI5R0DjqTjgL+QndlBru3Y3ZUA6k=
+ella.to/sse v0.0.3/go.mod h1:BHO+K9lPEBU+G7KZaSOKFVw1/scFb41waHcXfvwxLLI=
+ella.to/task v0.0.5 h1:IURW3b38cOgf+/n3eBdyTdSqBZRUVdF/RvO6k2XEAwA=
+ella.to/task v0.0.5/go.mod h1:JW2NYqngeUmWczEaRq9WEj9E2QbXATuYELiC0/lWlCo=
+github.com/rs/xid v1.6.0 h1:fV591PaemRlL6JfRxGDEPl69wICngIQ3shQtzfy2gxU=
+github.com/rs/xid v1.6.0/go.mod h1:7XoLgs4eV+QndskICGsho+ADou8ySMSjJKDIan90Nz0=
