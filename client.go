@@ -23,6 +23,7 @@ var _ Putter = (*Client)(nil)
 var _ Getter = (*Client)(nil)
 var _ Acker = (*Client)(nil)
 
+// POST /
 func (c *Client) Put(ctx context.Context, opts ...PutOpt) (Response, error) {
 	opt := &putOpt{}
 	for _, o := range opts {
@@ -43,7 +44,7 @@ func (c *Client) Put(ctx context.Context, opts ...PutOpt) (Response, error) {
 		}
 	}()
 
-	url := c.host + "/put"
+	url := c.host + "/"
 
 	req, err := http.NewRequest(http.MethodPost, url, pr)
 	if err != nil {
@@ -66,6 +67,7 @@ func (c *Client) Put(ctx context.Context, opts ...PutOpt) (Response, error) {
 	return nil, nil
 }
 
+// GET /?subject=...&position=...&name=...
 func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, error] {
 	opt := &getOpt{}
 	for _, o := range opts {
@@ -138,6 +140,7 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 	}
 }
 
+// PUT /ack?consumer_id=...&event_id=...
 func (c *Client) Ack(ctx context.Context, consumerId string, eventId string) error {
 	addr, err := url.Parse(c.host)
 	if err != nil {
