@@ -85,7 +85,11 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 	qs.Set("subject", opt.consumer.meta.Subject)
 	qs.Set("position", opt.consumer.meta.Position)
 	qs.Set("name", opt.consumer.meta.Name)
+	qs.Set("check_delay", opt.consumer.meta.CheckDelay.String())
+	qs.Set("redelivery_delay", opt.consumer.meta.RedeliveryDelay.String())
 	addr.RawQuery = qs.Encode()
+
+	autoAck := opt.consumer.autoAck
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr.String(), nil)
 	if err != nil {
@@ -130,6 +134,15 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 				if !yield(&evt, nil) {
 					return
 				}
+
+				if autoAck {
+					if err = evt.Ack(ctx); err != nil {
+						if !yield(nil, err) {
+							return
+						}
+					}
+				}
+
 			case "error":
 				yield(nil, fmt.Errorf("%s", incoming.Data))
 				return

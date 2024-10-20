@@ -73,7 +73,18 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	consumer.meta.Position = qs.Get("position")
 	consumer.meta.Subject = qs.Get("subject")
 
-	var err error
+	checkDelay, err := time.ParseDuration(qs.Get("check_delay"))
+	if err != nil || checkDelay <= 0 {
+		checkDelay = DefaultCheckDelay
+	}
+
+	redeliveryDelay, err := time.ParseDuration(qs.Get("redelivery_delay"))
+	if err != nil || redeliveryDelay <= 0 {
+		redeliveryDelay = DefaultRedeliveryDelay
+	}
+
+	consumer.meta.CheckDelay = checkDelay
+	consumer.meta.RedeliveryDelay = redeliveryDelay
 
 	if err = consumer.meta.validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -167,11 +178,6 @@ func NewHandler(dirPath string) (*Handler, error) {
 // server
 //
 
-const (
-	taskDelay       = 10 * time.Millisecond
-	expiresDuration = 5 * time.Second
-)
-
 type server struct {
 	// consumers is a map of all consumers, both ephemeral and durable
 	// this is useful during acking events
@@ -224,7 +230,7 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			// we haven't received an ack for the last message yet, should we send it again?
 			if consumer.meta.WaitingAckFor != "" && !consumer.meta.WaitingAckExpiredAt.Before(time.Now()) {
 				slog.InfoContext(ctx, "waiting for receiving ack for the last event", "id", consumer.id, "subject", consumer.meta.Subject, "event_id", consumer.meta.WaitingAckFor)
-				return task.Yeild(ctx, task.WithDelay(taskDelay))
+				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			}
 
 			stream, err := s.eventsLog.Stream(ctx, immuta.WithAbsolutePosition(consumer.meta.CurrentIndex))
@@ -238,7 +244,7 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			r, size, err := stream.Next()
 			if errors.Is(err, io.EOF) {
 				// there is no more events in the stream, so we yeild the task and hope next time there will be some events
-				return task.Yeild(ctx, task.WithDelay(taskDelay))
+				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			} else if err != nil {
 				slog.ErrorContext(ctx, "failed to read the next event from the stream", "id", consumer.id, "subject", consumer.meta.Subject, "index", consumer.meta.CurrentIndex, "error", err)
 				consumer.forceDisconnect()
@@ -256,7 +262,7 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 				// this is not the event that this consumer is interested in
 				// skip it and yeild the task for the next event
 				consumer.meta.CurrentIndex = size + immuta.HeaderSize
-				return task.Yeild(ctx, task.WithDelay(taskDelay))
+				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			}
 
 			consumer.meta.CurrentEventSize = size
@@ -270,12 +276,12 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			}
 
 			consumer.meta.WaitingAckFor = event.Id
-			consumer.meta.WaitingAckExpiredAt = time.Now().Add(expiresDuration)
+			consumer.meta.WaitingAckExpiredAt = time.Now().Add(consumer.meta.RedeliveryDelay)
 
 			// this yeild is a loop like, it will put this function back to the queue
 			// so other items in the queue can be processed, we also add a delay
 			// Eventually the delay value can be configured by the user
-			return task.Yeild(ctx, task.WithDelay(taskDelay))
+			return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 		})
 		return nil
 	}
@@ -294,6 +300,8 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 				CurrentIndex:        consumer.meta.CurrentIndex,
 				WaitingAckFor:       consumer.meta.WaitingAckFor,
 				WaitingAckExpiredAt: consumer.meta.WaitingAckExpiredAt,
+				CheckDelay:          consumer.meta.CheckDelay,
+				RedeliveryDelay:     consumer.meta.RedeliveryDelay,
 			}
 			s.durablesMeta[consumer.meta.Name] = durableMeta
 		}
@@ -310,6 +318,8 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 		consumer.meta.CurrentIndex = durableMeta.CurrentIndex
 		consumer.meta.WaitingAckFor = durableMeta.WaitingAckFor
 		consumer.meta.WaitingAckExpiredAt = durableMeta.WaitingAckExpiredAt
+		consumer.meta.CheckDelay = durableMeta.CheckDelay
+		consumer.meta.RedeliveryDelay = durableMeta.RedeliveryDelay
 
 		if _, ok := s.durables[consumer.meta.Name]; !ok {
 			s.durables[consumer.meta.Name] = make(map[string]*Consumer)
@@ -368,7 +378,7 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			}
 
 			if meta.WaitingAckFor != "" && !meta.WaitingAckExpiredAt.Before(time.Now()) {
-				return task.Yeild(ctx, task.WithDelay(taskDelay))
+				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			}
 
 			stream, err := s.eventsLog.Stream(ctx, immuta.WithAbsolutePosition(meta.CurrentIndex))
@@ -384,7 +394,7 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			r, size, err := stream.Next()
 			if errors.Is(err, io.EOF) {
 				// there is no more events in the stream, so we yeild the task and hope next time there will be some events
-				return task.Yeild(ctx, task.WithDelay(taskDelay))
+				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			}
 
 			var event Event
@@ -400,7 +410,7 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 				// this is not the event that this consumer is interested in
 				// skip it and yeild the task for the next event
 				meta.CurrentIndex = size + immuta.HeaderSize
-				return task.Yeild(ctx, task.WithDelay(taskDelay))
+				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			}
 
 			meta.CurrentEventSize = size
@@ -420,9 +430,9 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			}
 
 			meta.WaitingAckFor = event.Id
-			meta.WaitingAckExpiredAt = time.Now().Add(expiresDuration)
+			meta.WaitingAckExpiredAt = time.Now().Add(consumer.meta.RedeliveryDelay)
 
-			return task.Yeild(ctx, task.WithDelay(taskDelay))
+			return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 		})
 
 		return nil
