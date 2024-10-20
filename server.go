@@ -168,7 +168,7 @@ func NewHandler(dirPath string) (*Handler, error) {
 //
 
 const (
-	taskDelay       = 50 * time.Millisecond
+	taskDelay       = 10 * time.Millisecond
 	expiresDuration = 5 * time.Second
 )
 
@@ -220,8 +220,6 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 				return nil
 			default:
 			}
-
-			fmt.Println("checking if a new message is availble")
 
 			// we haven't received an ack for the last message yet, should we send it again?
 			if consumer.meta.WaitingAckFor != "" && !consumer.meta.WaitingAckExpiredAt.Before(time.Now()) {

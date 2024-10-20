@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -116,5 +117,141 @@ func TestBusClient_Redelivery(t *testing.T) {
 
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBusClient_PutNGet(t *testing.T) {
+	client := setupTestBusServer(t, "TestBusClient_PutNGet", true)
+
+	n := 10
+
+	for i := 0; i < n; i++ {
+		_, err := client.Put(context.TODO(), bus.WithSubject("a.b.c"), bus.WithData(fmt.Sprintf("hello %d", i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	i := 0
+
+	for event, err := range client.Get(ctx, bus.WithSubject("a.b.c")) {
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if event.Subject != "a.b.c" {
+			t.Fatalf("expected subject to be a.b.c, got %s", event.Subject)
+		}
+
+		if bytes.Equal(event.Payload, []byte(fmt.Sprintf("hello %d", i))) {
+			t.Fatalf("expected data to be hello %d, got %s", i, event.Payload)
+		}
+
+		err := event.Ack(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		i++
+	}
+
+	if i != n {
+		t.Fatalf("expected %d events, got %d", n, i)
+	}
+}
+
+func TestBusClientQueue_PutNGetM(t *testing.T) {
+	client := setupTestBusServer(t, "TestBusClientQueue_PutNGetM", true)
+
+	n := 5
+
+	for i := 0; i < n; i++ {
+		_, err := client.Put(context.TODO(), bus.WithSubject("a.b.c"), bus.WithData(fmt.Sprintf("hello %d", i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	i := 0
+	j := 0
+
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+
+		for event, err := range client.Get(ctx, bus.WithName("test"), bus.WithSubject("a.b.c")) {
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			if event.Subject != "a.b.c" {
+				t.Errorf("expected subject to be a.b.c, got %s", event.Subject)
+				return
+			}
+
+			if bytes.Equal(event.Payload, []byte(fmt.Sprintf("hello %d", i))) {
+				t.Errorf("expected data to be hello %d, got %s", i, event.Payload)
+				return
+			}
+
+			err := event.Ack(ctx)
+			if err != nil {
+				t.Error(err)
+			}
+
+			i++
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+
+		for event, err := range client.Get(ctx, bus.WithName("test"), bus.WithSubject("a.b.c")) {
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			if event.Subject != "a.b.c" {
+				t.Errorf("expected subject to be a.b.c, got %s", event.Subject)
+				return
+			}
+
+			if bytes.Equal(event.Payload, []byte(fmt.Sprintf("hello %d", i))) {
+				t.Errorf("expected data to be hello %d, got %s", i, event.Payload)
+				return
+			}
+
+			err := event.Ack(ctx)
+			if err != nil {
+				t.Error(err)
+			}
+
+			j++
+		}
+	}()
+
+	wg.Wait()
+
+	if i+j != n {
+		t.Fatalf("expected %d events, got %d", n, i+j)
+	}
+
+	if i == 0 {
+		t.Fatal("expected i to be greater than 0")
+	}
+
+	if j == 0 {
+		t.Fatal("expected j to be greater than 0")
 	}
 }
