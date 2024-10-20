@@ -189,6 +189,11 @@ func (e *Event) Ack(ctx context.Context, opts ...AckOpt) error {
 // Consumer
 //
 
+const (
+	DefaultCheckDelay      = 50 * time.Millisecond
+	DefaultRedeliveryDelay = 5 * time.Second
+)
+
 type ConsumerMeta struct {
 	// name is the name of the consumer, if it's provided, the consumer will be durable
 	// if multiple consumers with the same name, then the it forms a consumer group
@@ -217,6 +222,12 @@ type ConsumerMeta struct {
 	// if it's empty, it means that consumer is not waiting for any ack
 	WaitingAckFor       string    `json:"waiting_ack_for"`
 	WaitingAckExpiredAt time.Time `json:"waiting_ack_expired_at"`
+	// check delay is the time that the consumer will wait before checking the if there is any event
+	// the default is 50 milliseconds
+	CheckDelay time.Duration `json:"check_delay"`
+	// redelivery delay is the time that the consumer will wait before redelivering the event
+	// the default is 5 seconds
+	RedeliveryDelay time.Duration `json:"redelivery_delay"`
 }
 
 func (c *ConsumerMeta) validate() error {
@@ -252,8 +263,9 @@ func (c *ConsumerMeta) decode(r io.Reader) error {
 }
 
 type Consumer struct {
-	id   string
-	meta ConsumerMeta
+	id      string
+	meta    ConsumerMeta
+	autoAck bool
 	// pusher is the pusher that will be used to push events to the consumer
 	// using server sent events protocol
 	pusher sse.Pusher
@@ -310,6 +322,31 @@ func (s subjectOpt) configureGet(g *getOpt) error {
 // WithSubject sets the subject of the event and consumer
 func WithSubject(subject string) subjectOpt {
 	return subjectOpt(subject)
+}
+
+// Update the internal state of the consumer to how frequent it should check for new events
+// if the consumer is durable, the consumer who has created the queue will enforce this
+// the default value is set by DefaultCheckDelay constant
+func WithCheckDelay(delay time.Duration) GetOptFunc {
+	return func(g *getOpt) error {
+		if g.consumer.meta.CheckDelay != 0 {
+			return errors.New("check delay already set")
+		}
+
+		g.consumer.meta.CheckDelay = delay
+		return nil
+	}
+}
+
+func WithRedeliveryDelay(delay time.Duration) GetOptFunc {
+	return func(g *getOpt) error {
+		if g.consumer.meta.RedeliveryDelay != 0 {
+			return errors.New("redelivery delay already set")
+		}
+
+		g.consumer.meta.RedeliveryDelay = delay
+		return nil
+	}
 }
 
 // Name
