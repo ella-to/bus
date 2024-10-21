@@ -3,6 +3,7 @@ package bus_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"iter"
 	"net/http/httptest"
@@ -254,6 +255,111 @@ func TestBusClientQueue_PutNGetM(t *testing.T) {
 	if j == 0 {
 		t.Fatal("expected j to be greater than 0")
 	}
+}
+
+func TestConfirm(t *testing.T) {
+	client := setupTestBusServer(t, "TestConfirm", true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		for event, err := range client.Get(ctx, bus.WithSubject("a.b.c"), bus.WithRedeliveryDelay(100*time.Second)) {
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			if err = event.Ack(ctx); err != nil {
+				t.Error(err)
+				return
+			}
+
+			return
+		}
+	}()
+
+	_, err := client.Put(ctx, bus.WithSubject("a.b.c"), bus.WithData("hello"), bus.WithConfirm(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wg.Wait()
+}
+
+func TestBusReqResp(t *testing.T) {
+	client := setupTestBusServer(t, "TestBusReqResp", true)
+
+	type Req struct {
+		A int `json:"a"`
+		B int `json:"b"`
+	}
+
+	type Resp struct {
+		Result int `json:"result"`
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		for event, err := range client.Get(ctx, bus.WithSubject("math.add"), bus.WithCheckDelay(10*time.Millisecond), bus.WithOldestPosition(), bus.WithName("math.add")) {
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			var req Req
+			if err := json.Unmarshal(event.Payload, &req); err != nil {
+				t.Error(err)
+				return
+			}
+
+			resp := Resp{
+				Result: req.A + req.B,
+			}
+
+			if err = event.Ack(ctx, bus.WithData(resp)); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+
+	for range 10 {
+		resp, err := client.Put(ctx, bus.WithSubject("math.add"), bus.WithReqResp(), bus.WithData(Req{A: 1, B: 2}))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var result Resp
+		if err := resp.Error(); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := resp.Parse(&result); err != nil {
+			t.Fatal(err)
+		}
+
+		if result.Result != 3 {
+			t.Fatalf("expected result to be 3, got %d", result.Result)
+		}
+	}
+
+	cancel()
+	wg.Wait()
 }
 
 func TestMatchSubject(t *testing.T) {

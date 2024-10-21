@@ -68,7 +68,9 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 	qs := r.URL.Query()
 
-	consumer := &Consumer{}
+	consumer := &Consumer{
+		meta: &ConsumerMeta{},
+	}
 	consumer.meta.Name = qs.Get("name")
 	consumer.meta.Position = qs.Get("position")
 	consumer.meta.Subject = qs.Get("subject")
@@ -219,10 +221,11 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 		}
 
 		s.tasks.Submit(ctx, func(ctx context.Context) error {
+			slog.InfoContext(ctx, "checking for new events", "id", consumer.id, "subject", consumer.meta.Subject, "index", consumer.meta.CurrentIndex)
+
 			// this select makes sure that if consumer is disconnected, we don't actually yield this process anymore
 			select {
 			case <-ctx.Done():
-				fmt.Println("context done")
 				return nil
 			default:
 			}
@@ -242,7 +245,8 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			defer stream.Done()
 
 			r, size, err := stream.Next()
-			if errors.Is(err, io.EOF) {
+			// size == 0 is a special case, it means that header hasn't been written yet and need more time
+			if errors.Is(err, io.EOF) || size == 0 {
 				// there is no more events in the stream, so we yeild the task and hope next time there will be some events
 				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			} else if err != nil {
@@ -261,7 +265,8 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			if !MatchSubject(event.Subject, consumer.meta.Subject) {
 				// this is not the event that this consumer is interested in
 				// skip it and yeild the task for the next event
-				consumer.meta.CurrentIndex = size + immuta.HeaderSize
+				consumer.meta.CurrentIndex += size + immuta.HeaderSize
+				slog.Info("skipping event", "consumer_id", consumer.id, "subject", consumer.meta.Subject, "event_id", event.Id)
 				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			}
 
@@ -392,7 +397,8 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			defer stream.Done()
 
 			r, size, err := stream.Next()
-			if errors.Is(err, io.EOF) {
+			// size == 0 is a special case, it means that header hasn't been written yet and need more time
+			if errors.Is(err, io.EOF) || size == 0 {
 				// there is no more events in the stream, so we yeild the task and hope next time there will be some events
 				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			}
@@ -409,7 +415,7 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			if !MatchSubject(event.Subject, meta.Subject) {
 				// this is not the event that this consumer is interested in
 				// skip it and yeild the task for the next event
-				meta.CurrentIndex = size + immuta.HeaderSize
+				meta.CurrentIndex += size + immuta.HeaderSize
 				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			}
 
@@ -512,6 +518,8 @@ func (s *server) AckEvent(ctx context.Context, consumerId string, eventId string
 			consumer.meta.WaitingAckFor = ""
 			consumer.meta.CurrentIndex += consumer.meta.CurrentEventSize + immuta.HeaderSize
 			consumer.meta.CurrentEventSize = 0
+
+			slog.InfoContext(ctx, "acked event", "consumer_id", consumerId, "event_id", eventId, "index", consumer.meta.CurrentIndex)
 
 			return nil
 

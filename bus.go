@@ -1,12 +1,14 @@
 package bus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"iter"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode"
@@ -132,7 +134,11 @@ func (e *Event) encode(w io.Writer) error {
 }
 
 func (e *Event) decode(r io.Reader) error {
-	return json.NewDecoder(r).Decode(e)
+	var b bytes.Buffer
+	defer func() {
+		slog.Info("decoded event", "event", b.String())
+	}()
+	return json.NewDecoder(io.TeeReader(r, &b)).Decode(e)
 }
 
 func (e *Event) validate() error {
@@ -264,7 +270,7 @@ func (c *ConsumerMeta) decode(r io.Reader) error {
 
 type Consumer struct {
 	id      string
-	meta    ConsumerMeta
+	meta    *ConsumerMeta
 	autoAck bool
 	// pusher is the pusher that will be used to push events to the consumer
 	// using server sent events protocol
@@ -442,6 +448,19 @@ func WithConfirm(count int) PutOpt {
 	})
 }
 
+// Request
+
+func WithReqResp() PutOpt {
+	return PutOptFunc(func(p *putOpt) error {
+		if p.event.ResponseSubject != "" || p.confirmCount != 0 {
+			return errors.New("response subject already set")
+		}
+
+		p.event.ResponseSubject = newInboxSubject()
+		return nil
+	})
+}
+
 // utils
 
 func newInboxSubject() string {
@@ -514,8 +533,8 @@ func validateConsumerSubject(subject string) error {
 			}
 		}
 
-		if c != '.' && c != '*' && c != '>' && !unicode.IsDigit(c) && !unicode.IsLetter(c) {
-			return errors.New("subject should have only consists of alphanumerics, dots, *, and >")
+		if c != '.' && c != '*' && c != '>' && !unicode.IsDigit(c) && !unicode.IsLetter(c) && c != '_' {
+			return errors.New("subject should have only consists of alphanumerics, dots, *, > and _")
 		}
 	}
 

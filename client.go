@@ -61,15 +61,41 @@ func (c *Client) Put(ctx context.Context, opts ...PutOpt) (Response, error) {
 		return nil, newReaderError(resp.Body)
 	}
 
-	// TODO: we need to implement the Response type
-	// which is confirm count and Request/Reply
+	if opt.event.ResponseSubject == "" {
+		return nil, nil
+	}
+
+	waitingForConfirm := opt.confirmCount > 0
+
+	for event, err := range c.Get(ctx, WithSubject(opt.event.ResponseSubject), WithOldestPosition()) {
+		if err != nil {
+			return nil, err
+		}
+
+		if waitingForConfirm {
+			if err = event.Ack(ctx); err != nil {
+				return nil, err
+			}
+
+			opt.confirmCount--
+			if opt.confirmCount == 0 {
+				return nil, nil
+			}
+		} else {
+			return Response(event.Payload), nil
+		}
+	}
 
 	return nil, nil
 }
 
 // GET /?subject=...&position=...&name=...
 func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, error] {
-	opt := &getOpt{}
+	opt := &getOpt{
+		consumer: Consumer{
+			meta: &ConsumerMeta{},
+		},
+	}
 	for _, o := range opts {
 		if err := o.configureGet(opt); err != nil {
 			return newIterError(err)
@@ -130,6 +156,7 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 
 				evt.consumerId = consumerId
 				evt.acker = c
+				evt.putter = c
 
 				if !yield(&evt, nil) {
 					return
