@@ -119,7 +119,6 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 	<-ctx.Done()
 
-	slog.InfoContext(ctx, "consumer disconnected", "id", consumer.id)
 }
 
 func (h *Handler) Ack(w http.ResponseWriter, r *http.Request) {
@@ -193,8 +192,6 @@ type server struct {
 }
 
 func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
-	slog.Info("subscribing", "id", consumer.id, "name", consumer.meta.Name, "subject", consumer.meta.Subject)
-
 	if consumer.meta.Name == "" {
 		// ephemeral consumer
 
@@ -221,7 +218,6 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 		}
 
 		s.tasks.Submit(ctx, func(ctx context.Context) error {
-			slog.InfoContext(ctx, "checking for new events", "id", consumer.id, "subject", consumer.meta.Subject, "index", consumer.meta.CurrentIndex)
 
 			// this select makes sure that if consumer is disconnected, we don't actually yield this process anymore
 			select {
@@ -232,7 +228,6 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 
 			// we haven't received an ack for the last message yet, should we send it again?
 			if consumer.meta.WaitingAckFor != "" && !consumer.meta.WaitingAckExpiredAt.Before(time.Now()) {
-				slog.InfoContext(ctx, "waiting for receiving ack for the last event", "id", consumer.id, "subject", consumer.meta.Subject, "event_id", consumer.meta.WaitingAckFor)
 				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			}
 
@@ -266,13 +261,10 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 				// this is not the event that this consumer is interested in
 				// skip it and yeild the task for the next event
 				consumer.meta.CurrentIndex += size + immuta.HeaderSize
-				slog.Info("skipping event", "consumer_id", consumer.id, "subject", consumer.meta.Subject, "event_id", event.Id)
 				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
 			}
 
 			consumer.meta.CurrentEventSize = size
-
-			slog.InfoContext(ctx, "pushing an event to consumer", "id", consumer.id, "subject", consumer.meta.Subject, "event_id", event.Id)
 
 			if err = consumer.pusher.Push(ctx, "event", &event); err != nil {
 				slog.ErrorContext(ctx, "failed to push an event to consumer", "id", consumer.id, "subject", consumer.meta.Subject, "event_id", event.Id, "error", err)
@@ -451,7 +443,6 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 }
 
 func (s *server) Unsubscribe(ctx context.Context, consumer *Consumer) error {
-	slog.InfoContext(ctx, "unsubscribing", "id", consumer.id, "name", consumer.meta.Name, "subject", consumer.meta.Subject)
 
 	return s.tasks.Submit(context.Background(), func(ctx context.Context) error {
 		delete(s.consumers, consumer.id)
@@ -475,7 +466,6 @@ func (s *server) Unsubscribe(ctx context.Context, consumer *Consumer) error {
 }
 
 func (s *server) SaveEvent(ctx context.Context, event *Event) error {
-	slog.InfoContext(ctx, "saving event", "id", event.Id, "subject", event.Subject)
 
 	return s.tasks.Submit(ctx, func(ctx context.Context) error {
 		event.Id = newEventId()
@@ -502,7 +492,6 @@ func (s *server) SaveEvent(ctx context.Context, event *Event) error {
 }
 
 func (s *server) AckEvent(ctx context.Context, consumerId string, eventId string) error {
-	slog.InfoContext(ctx, "acking event", "consumer_id", consumerId, "event_id", eventId)
 
 	return s.tasks.Submit(ctx, func(ctx context.Context) error {
 		consumer, ok := s.consumers[consumerId]
@@ -518,8 +507,6 @@ func (s *server) AckEvent(ctx context.Context, consumerId string, eventId string
 			consumer.meta.WaitingAckFor = ""
 			consumer.meta.CurrentIndex += consumer.meta.CurrentEventSize + immuta.HeaderSize
 			consumer.meta.CurrentEventSize = 0
-
-			slog.InfoContext(ctx, "acked event", "consumer_id", consumerId, "event_id", eventId, "index", consumer.meta.CurrentIndex)
 
 			return nil
 

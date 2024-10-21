@@ -1,14 +1,12 @@
 package bus
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"iter"
-	"log/slog"
 	"strings"
 	"time"
 	"unicode"
@@ -134,11 +132,7 @@ func (e *Event) encode(w io.Writer) error {
 }
 
 func (e *Event) decode(r io.Reader) error {
-	var b bytes.Buffer
-	defer func() {
-		slog.Info("decoded event", "event", b.String())
-	}()
-	return json.NewDecoder(io.TeeReader(r, &b)).Decode(e)
+	return json.NewDecoder(r).Decode(e)
 }
 
 func (e *Event) validate() error {

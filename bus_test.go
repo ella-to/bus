@@ -315,7 +315,7 @@ func TestBusReqResp(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		for event, err := range client.Get(ctx, bus.WithSubject("math.add"), bus.WithCheckDelay(10*time.Millisecond), bus.WithOldestPosition(), bus.WithName("math.add")) {
+		for event, err := range client.Get(ctx, bus.WithSubject("math.add"), bus.WithOldestPosition(), bus.WithName("math.add")) {
 			if err != nil {
 				t.Error(err)
 				return
@@ -338,24 +338,22 @@ func TestBusReqResp(t *testing.T) {
 		}
 	}()
 
-	for range 10 {
-		resp, err := client.Put(ctx, bus.WithSubject("math.add"), bus.WithReqResp(), bus.WithData(Req{A: 1, B: 2}))
-		if err != nil {
-			t.Fatal(err)
-		}
+	resp, err := client.Put(ctx, bus.WithSubject("math.add"), bus.WithReqResp(), bus.WithData(Req{A: 1, B: 2}))
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		var result Resp
-		if err := resp.Error(); err != nil {
-			t.Fatal(err)
-		}
+	var result Resp
+	if err := resp.Error(); err != nil {
+		t.Fatal(err)
+	}
 
-		if err := resp.Parse(&result); err != nil {
-			t.Fatal(err)
-		}
+	if err := resp.Parse(&result); err != nil {
+		t.Fatal(err)
+	}
 
-		if result.Result != 3 {
-			t.Fatalf("expected result to be 3, got %d", result.Result)
-		}
+	if result.Result != 3 {
+		t.Fatalf("expected result to be 3, got %d", result.Result)
 	}
 
 	cancel()

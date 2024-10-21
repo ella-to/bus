@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"log/slog"
 	"net/http"
 	"net/url"
 
@@ -144,8 +143,6 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 		var evt Event
 
 		for incoming := range incomings {
-			slog.InfoContext(ctx, "received an incoming")
-
 			switch incoming.Event {
 			case "event":
 				err = evt.decode(bytes.NewReader(incoming.Data))
