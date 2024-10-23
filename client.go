@@ -133,6 +133,15 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 
 	consumerId := resp.Header.Get(HeaderConsumerId)
 
+	// call the meta function if it's set
+	// this is useful if the golang client wants to get access to the consumer id
+	// for example, to ack the event using cli
+	if opt.metaFn != nil {
+		opt.metaFn(map[string]string{
+			"consumer-id": consumerId,
+		})
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 
 	incomings := sse.Receive(ctx, resp.Body)

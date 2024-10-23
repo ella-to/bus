@@ -15,6 +15,10 @@ import (
 	"github.com/rs/xid"
 )
 
+var (
+	Version = "dev"
+)
+
 type Response json.RawMessage
 
 func (r Response) Error() error {
@@ -58,6 +62,7 @@ type Putter interface {
 
 type getOpt struct {
 	consumer Consumer
+	metaFn   func(map[string]string)
 }
 
 // GetOpt is an interface that can be used to configure the Get operation
@@ -432,6 +437,12 @@ func WithCustomPosition(pos string) GetOpt {
 
 func WithConfirm(count int) PutOpt {
 	return PutOptFunc(func(p *putOpt) error {
+		// if count is less than 1, then ignore it
+		// I added this condition to make it easier to implement bus put command
+		if count < 1 {
+			return nil
+		}
+
 		if p.confirmCount != 0 || p.event.ResponseSubject != "" {
 			return errors.New("confirm count or response subject already set")
 		}
@@ -451,6 +462,18 @@ func WithReqResp() PutOpt {
 		}
 
 		p.event.ResponseSubject = newInboxSubject()
+		return nil
+	})
+}
+
+// Extract consumer Id for consumer
+func WithExtractMeta(fn func(meta map[string]string)) GetOpt {
+	return GetOptFunc(func(g *getOpt) error {
+		if g.metaFn != nil {
+			return errors.New("meta function already set")
+		}
+
+		g.metaFn = fn
 		return nil
 	})
 }

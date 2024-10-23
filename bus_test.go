@@ -24,7 +24,7 @@ func setupTestBusServer(t *testing.T, testName string, truncate bool) *bus.Clien
 	}
 
 	os.MkdirAll(dirPath, os.ModePerm)
-	handler, err := bus.NewHandler(dirPath)
+	handler, err := bus.NewHandler(context.Background(), dirPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +41,8 @@ func setupTestBusServer(t *testing.T, testName string, truncate bool) *bus.Clien
 }
 
 func TestBusClient_Put(t *testing.T) {
+	t.Parallel()
+
 	client := setupTestBusServer(t, "TestBusClient_Put", true)
 
 	_, err := client.Put(context.TODO(), bus.WithSubject("a.b.c"), bus.WithData("hello"))
@@ -50,6 +52,8 @@ func TestBusClient_Put(t *testing.T) {
 }
 
 func TestBusClient_PutGet(t *testing.T) {
+	t.Parallel()
+
 	client := setupTestBusServer(t, "TestBusClient_PutGet", true)
 
 	_, err := client.Put(context.TODO(), bus.WithSubject("a.b.c"), bus.WithData("hello"))
@@ -76,6 +80,8 @@ func TestBusClient_PutGet(t *testing.T) {
 }
 
 func TestBusClient_Redelivery(t *testing.T) {
+	t.Parallel()
+
 	client := setupTestBusServer(t, "TestBusClient_Redelivery", true)
 
 	_, err := client.Put(context.TODO(), bus.WithSubject("a.b.c"), bus.WithData(fmt.Sprintf("hello")))
@@ -122,6 +128,8 @@ func TestBusClient_Redelivery(t *testing.T) {
 }
 
 func TestBusClient_PutNGet(t *testing.T) {
+	t.Parallel()
+
 	client := setupTestBusServer(t, "TestBusClient_PutNGet", true)
 
 	n := 10
@@ -165,6 +173,8 @@ func TestBusClient_PutNGet(t *testing.T) {
 }
 
 func TestBusClientQueue_PutNGetM(t *testing.T) {
+	t.Parallel()
+
 	client := setupTestBusServer(t, "TestBusClientQueue_PutNGetM", true)
 
 	n := 5
@@ -258,6 +268,8 @@ func TestBusClientQueue_PutNGetM(t *testing.T) {
 }
 
 func TestConfirm(t *testing.T) {
+	t.Parallel()
+
 	client := setupTestBusServer(t, "TestConfirm", true)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -294,6 +306,8 @@ func TestConfirm(t *testing.T) {
 }
 
 func TestBusReqResp(t *testing.T) {
+	t.Parallel()
+
 	client := setupTestBusServer(t, "TestBusReqResp", true)
 
 	type Req struct {
@@ -315,7 +329,7 @@ func TestBusReqResp(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		for event, err := range client.Get(ctx, bus.WithSubject("math.add"), bus.WithOldestPosition(), bus.WithName("math.add")) {
+		for event, err := range client.Get(ctx, bus.WithSubject("math.add"), bus.WithOldestPosition()) {
 			if err != nil {
 				t.Error(err)
 				return
@@ -338,22 +352,24 @@ func TestBusReqResp(t *testing.T) {
 		}
 	}()
 
-	resp, err := client.Put(ctx, bus.WithSubject("math.add"), bus.WithReqResp(), bus.WithData(Req{A: 1, B: 2}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	for range 20 {
+		resp, err := client.Put(ctx, bus.WithSubject("math.add"), bus.WithReqResp(), bus.WithData(Req{A: 1, B: 2}))
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	var result Resp
-	if err := resp.Error(); err != nil {
-		t.Fatal(err)
-	}
+		var result Resp
+		if err := resp.Error(); err != nil {
+			t.Fatal(err)
+		}
 
-	if err := resp.Parse(&result); err != nil {
-		t.Fatal(err)
-	}
+		if err := resp.Parse(&result); err != nil {
+			t.Fatal(err)
+		}
 
-	if result.Result != 3 {
-		t.Fatalf("expected result to be 3, got %d", result.Result)
+		if result.Result != 3 {
+			t.Fatalf("expected result to be 3, got %d", result.Result)
+		}
 	}
 
 	cancel()
@@ -361,6 +377,8 @@ func TestBusReqResp(t *testing.T) {
 }
 
 func TestMatchSubject(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		subject  string
 		pattern  string
@@ -416,6 +434,44 @@ func TestMatchSubject(t *testing.T) {
 			t.Errorf("MatchSubject(%q, %q) = %v; want %v", test.subject, test.pattern, result, test.expected)
 		}
 	}
+}
+
+func TestHowFastPut(t *testing.T) {
+	t.Parallel()
+
+	client := setupTestBusServer(t, "TestHowFastPut", true)
+
+	for range 100 {
+		_, err := client.Put(context.TODO(), bus.WithSubject("a.b.c"), bus.WithData("hello world"))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	count := 0
+
+	for event, err := range client.Get(ctx, bus.WithSubject("a.b.c")) {
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		count++
+
+		err = event.Ack(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if count == 100 {
+			break
+		}
+	}
+
+	fmt.Println("count", count)
 }
 
 func BenchmarkMatchSubject(b *testing.B) {

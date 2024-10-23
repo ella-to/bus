@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -157,8 +159,8 @@ func (h *Handler) Ack(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func NewHandler(dirPath string) (*Handler, error) {
-	s, err := newServer(dirPath)
+func NewHandler(ctx context.Context, dirPath string) (*Handler, error) {
+	s, err := newServer(ctx, dirPath)
 	if err != nil {
 		return nil, err
 	}
@@ -182,13 +184,15 @@ func NewHandler(dirPath string) (*Handler, error) {
 type server struct {
 	// consumers is a map of all consumers, both ephemeral and durable
 	// this is useful during acking events
-	consumers    map[string]*Consumer            // id -> consumer
-	ephemerals   map[string]*Consumer            // id -> consumer
-	durablesMeta map[string]*ConsumerMeta        // name -> meta
-	durables     map[string]map[string]*Consumer // name -> id -> consumer
-	eventsLog    *immuta.Storage                 // store all events
-	consumersLog *immuta.Storage                 // store durable consumers
-	tasks        task.Runner
+	consumers      map[string]*Consumer            // id -> consumer
+	ephemerals     map[string]*Consumer            // id -> consumer
+	durablesMeta   map[string]*ConsumerMeta        // name -> meta
+	durables       map[string]map[string]*Consumer // name -> id -> consumer
+	eventsLog      *immuta.Storage                 // store all events
+	consumersLog   *immuta.Storage                 // store durable consumers
+	tasks          task.Runner
+	buffer         bytes.Buffer
+	durablesRunner map[string]struct{} // consumer.id -> struct{} to keep track which consumer is running
 }
 
 func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
@@ -287,6 +291,7 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 	// we need to make sure that the consumer is not already subscribed
 	// and properly registered in the system
 	err := s.tasks.Submit(ctx, func(ctx context.Context) error {
+
 		durableMeta, ok := s.durablesMeta[consumer.meta.Name]
 		if !ok {
 			durableMeta = &ConsumerMeta{
@@ -335,103 +340,12 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 			return nil
 		}
 
-		s.tasks.Submit(ctx, func(ctx context.Context) error {
-			// check if there is at least one consumer in the group
-			// if not we can return immediately and that will remove the task from the queue
-			if len(s.durables[consumer.meta.Name]) == 0 {
-				return nil
-			}
+		// we store which consumer is running the task for this group
+		// and once this consumer is disconnected, we can start the task again
+		// for another consumer in the group
+		s.durablesRunner[consumer.id] = struct{}{}
 
-			defer func() {
-				meta, ok := s.durablesMeta[consumer.meta.Name]
-				if !ok {
-					return
-				}
-
-				pr, pw := io.Pipe()
-				go func() {
-					if err := meta.encode(pw); err != nil {
-						pw.CloseWithError(err)
-						slog.ErrorContext(ctx, "failed to encode durable consumer meta data", "name", consumer.meta.Name, "error", err)
-						return
-					}
-
-					pw.Close()
-				}()
-
-				_, err := s.consumersLog.Append(pr)
-				if err != nil {
-					slog.ErrorContext(ctx, "failed to append durable consumer meta data to the log", "name", consumer.meta.Name, "error", err)
-				}
-			}()
-
-			meta, ok := s.durablesMeta[consumer.meta.Name]
-			if !ok {
-				for _, consumer := range s.durables[consumer.meta.Name] {
-					consumer.forceDisconnect()
-				}
-				slog.ErrorContext(ctx, "durable consumer meta data not found", "name", consumer.meta.Name)
-				return nil
-			}
-
-			if meta.WaitingAckFor != "" && !meta.WaitingAckExpiredAt.Before(time.Now()) {
-				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
-			}
-
-			stream, err := s.eventsLog.Stream(ctx, immuta.WithAbsolutePosition(meta.CurrentIndex))
-			if err != nil {
-				for _, consumer := range s.durables[consumer.meta.Name] {
-					consumer.forceDisconnect()
-				}
-				slog.ErrorContext(ctx, "failed to create a stream from the events log", "name", consumer.meta.Name, "error", err)
-				return nil
-			}
-			defer stream.Done()
-
-			r, size, err := stream.Next()
-			// size == 0 is a special case, it means that header hasn't been written yet and need more time
-			if errors.Is(err, io.EOF) || size == 0 {
-				// there is no more events in the stream, so we yeild the task and hope next time there will be some events
-				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
-			}
-
-			var event Event
-			if err = event.decode(r); err != nil {
-				for _, consumer := range s.durables[consumer.meta.Name] {
-					consumer.forceDisconnect()
-				}
-				slog.ErrorContext(ctx, "failed to decode event from the stream", "name", consumer.meta.Name, "index", meta.CurrentIndex, "error", err)
-				return nil
-			}
-
-			if !MatchSubject(event.Subject, meta.Subject) {
-				// this is not the event that this consumer is interested in
-				// skip it and yeild the task for the next event
-				meta.CurrentIndex += size + immuta.HeaderSize
-				return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
-			}
-
-			meta.CurrentEventSize = size
-
-			// find a random consumer in the group to send the event
-			count := len(s.durables[consumer.meta.Name])
-			consumers := make([]*Consumer, 0, count)
-			for _, consumer := range s.durables[consumer.meta.Name] {
-				consumers = append(consumers, consumer)
-			}
-			consumer := consumers[rand.Intn(count)]
-
-			if err = consumer.pusher.Push(ctx, "event", &event); err != nil {
-				slog.ErrorContext(ctx, "failed to push an event to consumer", "id", consumer.id, "subject", meta.Subject, "event_id", event.Id, "error", err)
-				consumer.forceDisconnect()
-				return nil
-			}
-
-			meta.WaitingAckFor = event.Id
-			meta.WaitingAckExpiredAt = time.Now().Add(consumer.meta.RedeliveryDelay)
-
-			return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
-		})
+		s.durableLoop(ctx, consumer)
 
 		return nil
 	}).Await(ctx)
@@ -442,8 +356,114 @@ func (s *server) Subscribe(ctx context.Context, consumer *Consumer) error {
 	return nil
 }
 
-func (s *server) Unsubscribe(ctx context.Context, consumer *Consumer) error {
+func (s *server) durableLoop(ctx context.Context, consumer *Consumer) {
+	s.tasks.Submit(ctx, func(ctx context.Context) error {
+		// check if there is at least one consumer in the group
+		// if not we can return immediately and that will remove the task from the queue
+		if len(s.durables[consumer.meta.Name]) == 0 {
+			return nil
+		}
 
+		var requiredSave bool
+
+		defer func() {
+			if !requiredSave {
+				return
+			}
+
+			meta, ok := s.durablesMeta[consumer.meta.Name]
+			if !ok {
+				return
+			}
+
+			s.buffer.Reset()
+			err := meta.encode(&s.buffer)
+			if err != nil {
+				slog.ErrorContext(ctx, "failed to encode durable consumer meta data", "name", consumer.meta.Name, "error", err)
+				return
+			}
+
+			_, err = s.consumersLog.Append(&s.buffer)
+			if err != nil {
+				slog.ErrorContext(ctx, "failed to append durable consumer meta data to the log", "name", consumer.meta.Name, "error", err)
+			}
+		}()
+
+		meta, ok := s.durablesMeta[consumer.meta.Name]
+		if !ok {
+			for _, consumer := range s.durables[consumer.meta.Name] {
+				consumer.forceDisconnect()
+			}
+			slog.ErrorContext(ctx, "durable consumer meta data not found", "name", consumer.meta.Name)
+			return nil
+		}
+
+		if meta.WaitingAckFor != "" && !meta.WaitingAckExpiredAt.Before(time.Now()) {
+			return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
+		}
+
+		stream, err := s.eventsLog.Stream(ctx, immuta.WithAbsolutePosition(meta.CurrentIndex))
+		if err != nil {
+			for _, consumer := range s.durables[consumer.meta.Name] {
+				consumer.forceDisconnect()
+			}
+			slog.ErrorContext(ctx, "failed to create a stream from the events log", "name", consumer.meta.Name, "error", err)
+			return nil
+		}
+		defer stream.Done()
+
+		r, size, err := stream.Next()
+		// size == 0 is a special case, it means that header hasn't been written yet and need more time
+		if errors.Is(err, io.EOF) || size == 0 {
+			// there is no more events in the stream, so we yeild the task and hope next time there will be some events
+			return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
+		}
+
+		var event Event
+		if err = event.decode(r); err != nil {
+			for _, consumer := range s.durables[consumer.meta.Name] {
+				consumer.forceDisconnect()
+			}
+			slog.ErrorContext(ctx, "failed to decode event from the stream", "name", consumer.meta.Name, "index", meta.CurrentIndex, "error", err)
+			return nil
+		}
+
+		if !MatchSubject(event.Subject, meta.Subject) {
+			// this is not the event that this consumer is interested in
+			// skip it and yeild the task for the next event
+			oldIndex := meta.CurrentIndex
+			meta.CurrentIndex += size + immuta.HeaderSize
+			if oldIndex != meta.CurrentIndex {
+				requiredSave = true
+			}
+			return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
+		}
+
+		meta.CurrentEventSize = size
+		requiredSave = true
+
+		// find a random consumer in the group to send the event
+		count := len(s.durables[consumer.meta.Name])
+		consumers := make([]*Consumer, 0, count)
+		for _, consumer := range s.durables[consumer.meta.Name] {
+			consumers = append(consumers, consumer)
+		}
+		consumer := consumers[rand.Intn(count)]
+
+		if err = consumer.pusher.Push(ctx, "event", &event); err != nil {
+			slog.ErrorContext(ctx, "failed to push an event to consumer", "id", consumer.id, "subject", meta.Subject, "event_id", event.Id, "error", err)
+			consumer.forceDisconnect()
+			return nil
+		}
+
+		meta.WaitingAckFor = event.Id
+		meta.WaitingAckExpiredAt = time.Now().Add(consumer.meta.RedeliveryDelay)
+
+		return task.Yeild(ctx, task.WithDelay(consumer.meta.CheckDelay))
+	})
+}
+
+func (s *server) Unsubscribe(ctx context.Context, consumer *Consumer) error {
 	return s.tasks.Submit(context.Background(), func(ctx context.Context) error {
 		delete(s.consumers, consumer.id)
 
@@ -452,6 +472,8 @@ func (s *server) Unsubscribe(ctx context.Context, consumer *Consumer) error {
 			return nil
 		}
 
+		_, isConsumerRunner := s.durablesRunner[consumer.id]
+
 		if _, ok := s.durables[consumer.meta.Name]; !ok {
 			return nil
 		}
@@ -459,6 +481,26 @@ func (s *server) Unsubscribe(ctx context.Context, consumer *Consumer) error {
 		delete(s.durables[consumer.meta.Name], consumer.id)
 		if len(s.durables[consumer.meta.Name]) == 0 {
 			delete(s.durables, consumer.meta.Name)
+		}
+
+		if isConsumerRunner {
+			// check if there is another consumer in the group
+			// if so, we need to start the task for that consumer
+			groups, ok := s.durables[consumer.meta.Name]
+			if !ok {
+				return nil
+			}
+
+			if len(groups) == 0 {
+				return nil
+			}
+
+			// pick the first consumer in the group
+			for _, consumer := range groups {
+				s.durablesRunner[consumer.id] = struct{}{}
+				s.durableLoop(ctx, consumer)
+				return nil
+			}
 		}
 
 		return nil
@@ -471,18 +513,14 @@ func (s *server) SaveEvent(ctx context.Context, event *Event) error {
 		event.Id = newEventId()
 		event.CreatedAt = time.Now()
 
-		pr, pw := io.Pipe()
-		go func() {
-			if err := event.encode(pw); err != nil {
-				pw.CloseWithError(err)
-				slog.ErrorContext(ctx, "failed to encode event", "id", event.Id, "error", err)
-				return
-			}
+		s.buffer.Reset()
+		err := event.encode(&s.buffer)
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to encode event", "id", event.Id, "error", err)
+			return err
+		}
 
-			pw.Close()
-		}()
-
-		_, err := s.eventsLog.Append(pr)
+		_, err = s.eventsLog.Append(&s.buffer)
 		if err != nil {
 			slog.ErrorContext(ctx, "failed to append event to the log", "id", event.Id, "error", err)
 		}
@@ -504,6 +542,7 @@ func (s *server) AckEvent(ctx context.Context, consumerId string, eventId string
 				return fmt.Errorf("consumer %s is not waiting for event %s", consumerId, eventId)
 			}
 
+			consumer.meta.AckedCount++
 			consumer.meta.WaitingAckFor = ""
 			consumer.meta.CurrentIndex += consumer.meta.CurrentEventSize + immuta.HeaderSize
 			consumer.meta.CurrentEventSize = 0
@@ -521,6 +560,7 @@ func (s *server) AckEvent(ctx context.Context, consumerId string, eventId string
 			}
 
 			meta.WaitingAckFor = ""
+			meta.AckedCount++
 			meta.CurrentIndex += meta.CurrentEventSize + immuta.HeaderSize
 			meta.CurrentEventSize = 0
 
@@ -530,19 +570,14 @@ func (s *server) AckEvent(ctx context.Context, consumerId string, eventId string
 				consumer.meta.CurrentEventSize = meta.CurrentEventSize
 			}
 
-			// save the consumer to consumer logs
-			pr, pw := io.Pipe()
-			go func() {
-				if err := meta.encode(pw); err != nil {
-					pw.CloseWithError(err)
-					slog.ErrorContext(ctx, "failed to encode durable consumer meta data", "name", consumer.meta.Name, "error", err)
-					return
-				}
+			s.buffer.Reset()
+			err := meta.encode(&s.buffer)
+			if err != nil {
+				slog.ErrorContext(ctx, "failed to encode durable consumer meta data", "name", consumer.meta.Name, "error", err)
+				return err
+			}
 
-				pw.Close()
-			}()
-
-			_, err := s.consumersLog.Append(pr)
+			_, err = s.consumersLog.Append(&s.buffer)
 			if err != nil {
 				slog.ErrorContext(ctx, "failed to append durable consumer meta data to the log", "name", consumer.meta.Name, "error", err)
 			}
@@ -571,7 +606,7 @@ func (s *server) Close(ctx context.Context) error {
 	return nil
 }
 
-func newServer(dirPath string) (*server, error) {
+func newServer(ctx context.Context, dirPath string) (*server, error) {
 	eventLogs, err := immuta.New(
 		immuta.WithQueueSize(10),
 		immuta.WithFastWrite(filepath.Join(dirPath, "events.log")),
@@ -580,46 +615,91 @@ func newServer(dirPath string) (*server, error) {
 		return nil, err
 	}
 
-	consumerLogs, err := immuta.New(
-		immuta.WithQueueSize(10),
-		immuta.WithFastWrite(filepath.Join(dirPath, "consumers.log")),
-	)
-	if err != nil {
-		return nil, err
-	}
-
 	s := &server{
-		consumers:    make(map[string]*Consumer),
-		ephemerals:   make(map[string]*Consumer),
-		durablesMeta: make(map[string]*ConsumerMeta),
-		durables:     make(map[string]map[string]*Consumer),
-		eventsLog:    eventLogs,
-		consumersLog: consumerLogs,
-		tasks:        task.NewRunner(),
+		consumers:      make(map[string]*Consumer),
+		ephemerals:     make(map[string]*Consumer),
+		durablesMeta:   make(map[string]*ConsumerMeta),
+		durables:       make(map[string]map[string]*Consumer),
+		eventsLog:      eventLogs,
+		tasks:          task.NewRunner(),
+		durablesRunner: make(map[string]struct{}),
 	}
 
 	// load durable consumers
-	stream, err := s.consumersLog.Stream(context.Background())
+	// Since we are using a log file to store durable consumers, the state of the durable consumers
+	// it is required to read the log file and load the state of the durable consumers
+	// and then flush the state back to the log file
+	err = func() error {
+		consumersLog, err := immuta.New(
+			immuta.WithQueueSize(10),
+			immuta.WithFastWrite(filepath.Join(dirPath, "consumers.log")),
+		)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			consumersLog.Close()
+			// rename the log file to a new name for backup purposes
+			os.Rename(filepath.Join(dirPath, "consumers.log"), filepath.Join(dirPath, fmt.Sprintf("consumers.%s.log", time.Now().Format("2006-01-02T15:04:05"))))
+		}()
+
+		stream, err := consumersLog.Stream(context.Background())
+		if err != nil {
+			return err
+		}
+		defer stream.Done()
+
+		for {
+			r, _, err := stream.Next()
+			if errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
+				return err
+			}
+
+			var meta ConsumerMeta
+			if err = meta.decode(r); err != nil {
+				return err
+			}
+
+			s.durablesMeta[meta.Name] = &meta
+		}
+
+		return nil
+	}()
 	if err != nil {
 		return nil, err
 	}
-	defer stream.Done()
 
-	for {
-		r, _, err := stream.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return nil, err
+	// write back durable consumers into a new log file
+	// we do this to make sure that we have the latest state of the durable consumers
+	err = func() error {
+		consumersLog, err := immuta.New(
+			immuta.WithQueueSize(10),
+			immuta.WithFastWrite(filepath.Join(dirPath, "consumers.log")),
+		)
+		if err != nil {
+			return err
 		}
 
-		var meta ConsumerMeta
-		if err = meta.decode(r); err != nil {
-			return nil, err
+		var buffer bytes.Buffer
+
+		for _, meta := range s.durablesMeta {
+			buffer.Reset()
+			err := meta.encode(&buffer)
+			if err != nil {
+				return err
+			}
+
+			_, err = consumersLog.Append(&buffer)
+			if err != nil {
+				return err
+			}
 		}
 
-		s.durablesMeta[meta.Name] = &meta
-	}
+		s.consumersLog = consumersLog
+		return nil
+	}()
 
 	return s, nil
 }
