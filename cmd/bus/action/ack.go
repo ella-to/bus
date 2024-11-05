@@ -1,8 +1,9 @@
 package action
 
 import (
-	"ella.to/bus"
 	"github.com/urfave/cli/v2"
+
+	"ella.to/bus"
 )
 
 func AckCommand() *cli.Command {
@@ -13,7 +14,7 @@ func AckCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:  "host",
 				Usage: "bus server address to connect to",
-				Value: "http://localhost:2024",
+				Value: "http://localhost:2021",
 			},
 			&cli.StringFlag{
 				Name:     "consumer-id",

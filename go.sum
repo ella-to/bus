@@ -1,7 +1,9 @@
-ella.to/immuta v0.0.2 h1:8wqXxj8rPVerE/w4weLmcEqgzf6skccm2rxgSm8R3so=
-ella.to/immuta v0.0.2/go.mod h1:hnS1IfO+dH5a74oa1GobALX1jQkT5iHK2/yLwKELQjU=
-ella.to/sse v0.0.3 h1:+A/L1S/FpCMl4URBI5R0DjqTjgL+QndlBru3Y3ZUA6k=
-ella.to/sse v0.0.3/go.mod h1:BHO+K9lPEBU+G7KZaSOKFVw1/scFb41waHcXfvwxLLI=
+ella.to/immuta v0.0.3 h1:QCtTvF7Lr5c807KUvPBJVCZLfQt7Rb+LRE6n+XIyLe4=
+ella.to/immuta v0.0.3/go.mod h1:0lKIf8Nu+irCQz5pX7lqrQaepMyfNM3zl4kRzK/oLNw=
+ella.to/solid v0.0.2 h1:RSxqe/HEbMZ/vcwwDD9xMQV643Q512IcS9IF5KHcp9w=
+ella.to/solid v0.0.2/go.mod h1:0+qlRn4069za08wDegNAFUICaKAZCZHKUjav8UEZml0=
+ella.to/sse v0.0.4 h1:FtIOCepzT3He8wPRXUYdRKRSPOVJ/XGCTxsIjKHxUTo=
+ella.to/sse v0.0.4/go.mod h1:KtOhMRF/qbSIB64YmrURiyQXr/Jg06/hJ0HLPzwu1+M=
 ella.to/task v0.0.5 h1:IURW3b38cOgf+/n3eBdyTdSqBZRUVdF/RvO6k2XEAwA=
 ella.to/task v0.0.5/go.mod h1:JW2NYqngeUmWczEaRq9WEj9E2QbXATuYELiC0/lWlCo=
 github.com/cpuguy83/go-md2man/v2 v2.0.5 h1:ZtcqGrnekaHpVLArFSe4HK5DoKx1T0rq2DwVB0alcyc=

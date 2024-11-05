@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,7 +23,7 @@ const logo = `
 ██████╦╝██║░░░██║╚█████╗░
 ██╔══██╗██║░░░██║░╚═══██╗
 ██████╦╝╚██████╔╝██████╔╝
-╚═════╝░░╚═════╝░╚═════╝░ %s
+╚═════╝░░╚═════╝░╚═════╝░ %s, %s
 
 `
 
@@ -33,30 +35,28 @@ func ServerCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:  "addr",
 				Usage: "address to listen on",
-				Value: "0.0.0.0:2024",
+				Value: "0.0.0.0:2021",
 			},
 			&cli.StringFlag{
-				Name:  "dir",
-				Usage: "directory to store events and consumers information",
-				Value: "./bus_data",
+				Name:  "path",
+				Usage: "path to events log file",
+				Value: "./bus_data/events.log",
 			},
 		},
 		Action: func(c *cli.Context) error {
-			addr := c.String("addr")
-			dir := c.String("dir")
+			logLevel := getLogLevel(getValue(os.Getenv("BUS_LOG_LEVEL"), "INFO"))
+			addr := getValue(os.Getenv("BUS_ADDR"), c.String("addr"))
+			path := getValue(os.Getenv("BUS_PATH"), c.String("path"))
 
-			if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+			slog.SetLogLoggerLevel(logLevel)
+
+			if err := os.MkdirAll(filepath.Base(path), os.ModePerm); err != nil {
 				return err
 			}
 
-			handler, err := bus.NewHandler(c.Context, dir)
+			server, err := bus.NewServer(addr, path)
 			if err != nil {
 				return err
-			}
-
-			server := http.Server{
-				Addr:    addr,
-				Handler: handler,
 			}
 
 			// Channel to listen for interrupt signals
@@ -65,8 +65,8 @@ func ServerCommand() *cli.Command {
 
 			// Goroutine to start the server
 			go func() {
-				fmt.Printf(logo, bus.Version)
-				slog.Info("server started", "address", addr, "dir", dir)
+				fmt.Printf(logo, bus.Version, bus.GitCommit)
+				slog.Info("server started", "address", addr, "events_log_file", path)
 
 				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 					slog.Error("failed to start server", "error", err)
@@ -84,5 +84,29 @@ func ServerCommand() *cli.Command {
 			// Attempt graceful shutdown
 			return server.Shutdown(ctx)
 		},
+	}
+}
+
+func getValue(seq ...string) string {
+	for _, s := range seq {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func getLogLevel(value string) slog.Level {
+	switch strings.ToUpper(value) {
+	case "DEBUG":
+		return slog.LevelDebug
+	case "INFO":
+		return slog.LevelInfo
+	case "WARN":
+		return slog.LevelWarn
+	case "ERROR":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
 	}
 }

@@ -3,11 +3,11 @@ package action
 import (
 	"fmt"
 
-	"ella.to/bus"
 	"github.com/urfave/cli/v2"
+
+	"ella.to/bus"
 )
 
-// bus put --host http://localhost:8080 --type event|req-resp|confirm --subject a.b.c --data "{}"
 // bus put --host http://localhost:8080 --confirm-count 1 --subject a.b.c --data "hello"
 
 func PutCommand() *cli.Command {
@@ -18,7 +18,7 @@ func PutCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:  "host",
 				Usage: "bus server address to connect to",
-				Value: "http://localhost:2024",
+				Value: "http://localhost:2021",
 			},
 			&cli.StringFlag{
 				Name:     "subject",
@@ -26,7 +26,7 @@ func PutCommand() *cli.Command {
 				Required: true,
 			},
 			&cli.Int64Flag{
-				Name:  "confirm-count",
+				Name:  "confirm",
 				Usage: "number of confirmations to wait for",
 				Action: func(c *cli.Context, value int64) error {
 					if value < 1 {
@@ -45,27 +45,22 @@ func PutCommand() *cli.Command {
 		Action: func(c *cli.Context) error {
 			host := c.String("host")
 			subject := c.String("subject")
-			confirmCount := c.Int64("confirm-count")
+			confirmCount := c.Int64("confirm")
 			data := c.String("data")
 
 			client := bus.NewClient(host)
 
-			resp, err := client.Put(c.Context,
+			resp := client.Put(c.Context,
 				bus.WithSubject(subject),
 				bus.WithData(data),
 				bus.WithConfirm(int(confirmCount)),
 			)
-			if err != nil {
-				return err
+			if resp.Error() != nil {
+				return resp.Error()
 			}
 
-			if resp != nil {
-				if err := resp.Error(); err != nil {
-					return err
-				}
-
-				fmt.Fprintf(c.App.Writer, "%s\n", string(resp))
-			}
+			fmt.Fprintf(c.App.ErrWriter, "%s\n", resp)
+			fmt.Fprintf(c.App.Writer, "%s\n", string(resp.Payload))
 
 			return nil
 		},

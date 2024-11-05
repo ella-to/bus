@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"time"
 
-	"ella.to/bus"
 	"ella.to/immuta"
 	"github.com/urfave/cli/v2"
+
+	"ella.to/bus"
 )
 
 func DebugCommand() *cli.Command {
@@ -23,55 +25,58 @@ func DebugCommand() *cli.Command {
 				Usage: "directory to store events and consumers information",
 				Value: "./bus_data",
 			},
-			&cli.BoolFlag{
-				Name:  "raw",
-				Usage: "show all the raw data of event",
-				Value: false,
-			},
 		},
 		Action: func(c *cli.Context) error {
 			dir := c.String("dir")
-			showRaw := c.Bool("raw")
 
 			filepath := fmt.Sprintf("%s/events.log", dir)
 
-			im, err := immuta.New(immuta.WithFastWrite(filepath))
+			im, err := immuta.New(filepath, 2, true)
 			if err != nil {
 				log.Fatal(err)
 			}
 
 			defer im.Close()
 
-			stream, err := im.Stream(context.Background())
-			if err != nil {
-				log.Fatal(err)
-			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			stream := im.Stream(ctx, 0)
 			defer stream.Done()
 
 			var count int64
 			var size int64
+
 			for {
-				r, s, err := stream.Next()
+				err := func() error {
+					ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+					defer cancel()
+
+					r, s, err := stream.Next(ctx)
+					if err != nil {
+						return err
+					}
+					defer r.Done()
+
+					var event bus.Event
+
+					err = json.NewDecoder(r).Decode(&event)
+					if err != nil {
+						return err
+					}
+
+					count++
+					size += s
+
+					json.NewEncoder(c.App.Writer).Encode(event)
+					return nil
+				}()
 				if errors.Is(err, io.EOF) {
+					break
+				} else if errors.Is(err, context.DeadlineExceeded) {
 					break
 				} else if err != nil {
 					return err
-				}
-
-				var event bus.Event
-
-				err = json.NewDecoder(r).Decode(&event)
-				if err != nil {
-					return err
-				}
-
-				count++
-				size += s
-
-				if showRaw {
-					json.NewEncoder(c.App.Writer).Encode(event)
-				} else {
-					fmt.Fprintf(c.App.Writer, "% 6d: %s\n", count, event.String())
 				}
 			}
 

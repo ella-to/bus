@@ -1,7 +1,6 @@
 package bus
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +8,9 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
+	"time"
 
 	"ella.to/sse"
 )
@@ -23,11 +25,11 @@ var _ Getter = (*Client)(nil)
 var _ Acker = (*Client)(nil)
 
 // POST /
-func (c *Client) Put(ctx context.Context, opts ...PutOpt) (Response, error) {
+func (c *Client) Put(ctx context.Context, opts ...PutOpt) *Response {
 	opt := &putOpt{}
 	for _, o := range opts {
 		if err := o.configurePut(opt); err != nil {
-			return nil, err
+			return &Response{err: err}
 		}
 	}
 
@@ -47,54 +49,69 @@ func (c *Client) Put(ctx context.Context, opts ...PutOpt) (Response, error) {
 
 	req, err := http.NewRequest(http.MethodPost, url, pr)
 	if err != nil {
-		return nil, err
+		return &Response{err: err}
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return &Response{err: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusAccepted {
-		return nil, newReaderError(resp.Body)
+		return &Response{err: newReaderError(resp.Body)}
+	}
+
+	id := resp.Header.Get(HeaderEventId)
+	createdAt, err := time.Parse(time.RFC3339Nano, resp.Header.Get(HeaderEventCreatedAt))
+	if err != nil {
+		return &Response{err: err}
+	}
+	index, err := strconv.ParseInt(resp.Header.Get(HeaderEventIndex), 10, 64)
+	if err != nil {
+		return &Response{err: err}
+	}
+
+	response := &Response{
+		Id:        id,
+		CreatedAt: createdAt,
+		Index:     index,
 	}
 
 	if opt.event.ResponseSubject == "" {
-		return nil, nil
+		return response
 	}
 
 	waitingForConfirm := opt.confirmCount > 0
 
-	for event, err := range c.Get(ctx, WithSubject(opt.event.ResponseSubject), WithOldestPosition()) {
+	for event, err := range c.Get(
+		ctx,
+		WithSubject(opt.event.ResponseSubject),
+		WithStartFrom(StartOldest),
+		WithAckStrategy(AckNone),
+	) {
 		if err != nil {
-			return nil, err
+			response.err = err
+			return response
 		}
 
-		if waitingForConfirm {
-			if err = event.Ack(ctx); err != nil {
-				return nil, err
-			}
+		if !waitingForConfirm {
+			response.Payload = event.Payload
+			return response
+		}
 
-			opt.confirmCount--
-			if opt.confirmCount == 0 {
-				return nil, nil
-			}
-		} else {
-			return Response(event.Payload), nil
+		opt.confirmCount--
+		if opt.confirmCount == 0 {
+			return response
 		}
 	}
 
-	return nil, nil
+	return response
 }
 
-// GET /?subject=...&position=...&name=...
+// GET /?subject=...&start=...&ack=...&redelivery=...
 func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, error] {
-	opt := &getOpt{
-		consumer: Consumer{
-			meta: &ConsumerMeta{},
-		},
-	}
+	opt := &getOpt{}
 	for _, o := range opts {
 		if err := o.configureGet(opt); err != nil {
 			return newIterError(err)
@@ -106,15 +123,17 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 		return newIterError(err)
 	}
 
-	qs := url.Values{}
-	qs.Set("subject", opt.consumer.meta.Subject)
-	qs.Set("position", opt.consumer.meta.Position)
-	qs.Set("name", opt.consumer.meta.Name)
-	qs.Set("check_delay", opt.consumer.meta.CheckDelay.String())
-	qs.Set("redelivery_delay", opt.consumer.meta.RedeliveryDelay.String())
-	addr.RawQuery = qs.Encode()
+	autoAck := opt.ackStrategy == "auto"
+	if autoAck {
+		opt.ackStrategy = AckManual
+	}
 
-	autoAck := opt.consumer.autoAck
+	qs := url.Values{}
+	qs.Set("subject", opt.subject)
+	qs.Set("start", opt.start)
+	qs.Set("ack", opt.ackStrategy)
+	qs.Set("redelivery", opt.redelivery.String())
+	addr.RawQuery = qs.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr.String(), nil)
 	if err != nil {
@@ -144,32 +163,44 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 
 	ctx, cancel := context.WithCancel(ctx)
 
-	incomings := sse.Receive(ctx, resp.Body)
+	incomings := sse.NewReceiver(resp.Body)
 
 	return func(yield func(*Event, error) bool) {
 		defer cancel()
 
-		var evt Event
+		event := Event{
+			acker:      c,
+			putter:     c,
+			consumerId: consumerId,
+		}
 
-		for incoming := range incomings {
-			switch incoming.Event {
-			case "event":
-				err = evt.decode(bytes.NewReader(incoming.Data))
-				if err != nil {
-					yield(nil, err)
+		for {
+			msg, err := incomings.Receive(ctx)
+			if err != nil {
+				if !yield(nil, err) {
 					return
 				}
+			}
 
-				evt.consumerId = consumerId
-				evt.acker = c
-				evt.putter = c
+			switch msg.Event {
+			case "event":
+				if msg.Data == nil {
+					continue
+				}
 
-				if !yield(&evt, nil) {
+				if err := event.decode(strings.NewReader(*msg.Data)); err != nil {
+					if !yield(nil, fmt.Errorf("failed to decode event '%s': %w", *msg.Data, err)) {
+						return
+					}
+					continue
+				}
+
+				if !yield(&event, nil) {
 					return
 				}
 
 				if autoAck {
-					if err = evt.Ack(ctx); err != nil {
+					if err := event.Ack(ctx); err != nil {
 						if !yield(nil, err) {
 							return
 						}
@@ -177,8 +208,14 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 				}
 
 			case "error":
-				yield(nil, fmt.Errorf("%s", incoming.Data))
-				return
+				if msg.Data == nil {
+					continue
+				}
+
+				if !yield(nil, fmt.Errorf("%s", *msg.Data)) {
+					return
+				}
+
 			case "done":
 				return
 			}

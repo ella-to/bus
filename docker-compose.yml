@@ -1,0 +1,26 @@
+services:
+  bus:
+    image: ellato/bus:latest
+
+    environment:
+      - BUS_LOG_LEVEL=INFO
+      - BUS_PATH=/storage/events.log
+      - BUS_ADDR=0.0.0.0:2021
+
+    # if ports is removed, then the bus service can
+    # only be accessed from within the network bus
+    # make sure to add the bus network to the other services
+    ports:
+      - "2021:2021"
+
+    # make sure to use the right network
+    networks:
+      - bus
+
+    volumes:
+      - ./storage:/storage
+
+networks:
+  bus:
+    name: bus_net
+    driver: bridge
