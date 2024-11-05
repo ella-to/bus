@@ -31,6 +31,18 @@ To install `bus`, use:
 go get ella.to/bus@v0.3.0
 ```
 
+to install a cli, run the following
+
+```shell
+go install ella.to/bus/cmd/bus@v0.3.0
+```
+
+and to run the server using docker, simply use the provided docker-compose and run it
+
+```
+docker-compose up
+```
+
 ## Basic Example
 
 At its core, bus is a pub/sub library, enabling asynchronous communication between publishers and subscribers. Here’s how to publish an event after creating a client
