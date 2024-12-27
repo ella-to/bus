@@ -26,6 +26,10 @@ const (
 	HeaderConsumerId     = "X-BUS-CONSUMER-ID"
 )
 
+const (
+	DefaultSsePingTimeout = 30 * time.Second
+)
+
 type Handler struct {
 	mux           *http.ServeMux
 	eventsLog     *immuta.Storage
@@ -111,11 +115,12 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set(HeaderConsumerId, id)
 
-	pusher, err := sse.NewPusher(w)
+	pusher, err := sse.NewPusher(w, DefaultSsePingTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	defer pusher.Close()
 
 	var startPos int64
 	if start == StartOldest {
