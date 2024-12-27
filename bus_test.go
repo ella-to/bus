@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"net/http/httptest"
 	"os"
 	"sync"
@@ -140,4 +141,27 @@ func TestSinglePutMultipleGet(t *testing.T) {
 	wg.Wait()
 
 	fmt.Println("done")
+}
+
+func TestPullClose(t *testing.T) {
+	client := createBusServer(t, "TestPull.log")
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// NOTE: once an iterator converted to a puller,
+	// the only way to stop/close the iterator is by calling
+	// the stop function and canceling the context
+
+	_, stop := iter.Pull2(
+		client.Get(
+			ctx,
+			bus.WithSubject("a.b.c"),
+			bus.WithStartFrom(bus.StartOldest),
+		),
+	)
+
+	stop()
+	cancel()
+
+	time.Sleep(1 * time.Second)
 }
