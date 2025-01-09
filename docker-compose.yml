@@ -6,6 +6,9 @@ services:
       - BUS_LOG_LEVEL=INFO
       - BUS_PATH=/storage/events.log
       - BUS_ADDR=0.0.0.0:2021
+      # each application requires a different namespaces
+      # list them separated by comma here
+      - BUS_NAMESPACES=namespace1,namespace2 
 
     # if ports is removed, then the bus service can
     # only be accessed from within the network bus

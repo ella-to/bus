@@ -5,7 +5,7 @@ import (
 )
 
 func newInboxSubject() string {
-	return newId("i.")
+	return newId("_bus_.")
 }
 
 func newEventId() string {

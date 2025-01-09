@@ -7,6 +7,11 @@ import (
 	"ella.to/bus"
 )
 
+// NOTE:
+// make sure to run provide namepaces "math" before running the server
+// for example
+// go run cmd/bus/main.go server --namespaces math
+
 type Request struct {
 	A int
 	B int

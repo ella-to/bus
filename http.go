@@ -63,13 +63,15 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 
 	var eventIndex int64
 
+	namespaceIdx := strings.Index(event.Subject, ".")
+
 	err := h.runner.Submit(ctx, func(ctx context.Context) error {
 		err := event.encode(&h.buffer)
 		if err != nil {
 			return err
 		}
 
-		eventIndex, _, err = h.eventsLog.Append(ctx, &h.buffer)
+		eventIndex, _, err = h.eventsLog.Append(ctx, event.Subject[:namespaceIdx], &h.buffer)
 		if err != nil {
 			return err
 		}
@@ -137,7 +139,9 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		startPos = 0
 	}
 
-	stream := h.eventsLog.Stream(ctx, startPos)
+	namespaceIdx := strings.Index(subject, ".")
+
+	stream := h.eventsLog.Stream(ctx, subject[:namespaceIdx], startPos)
 	defer stream.Done()
 
 	for {
@@ -283,8 +287,35 @@ func NewHandler(eventLogs *immuta.Storage, runner task.Runner) *Handler {
 	return h
 }
 
-func NewServer(addr string, eventLogs string) (*http.Server, error) {
-	eventStorage, err := immuta.New(eventLogs, 10, true)
+func NewServer(addr string, logsDirPath string, namespaces []string) (*http.Server, error) {
+	{
+		// This block is used to validate the namespaces
+		// and make sure there is no reserved and duplicate namespaces
+
+		namespacesSet := make(map[string]struct{})
+		for _, ns := range namespaces {
+			namespacesSet[ns] = struct{}{}
+		}
+
+		// NOTE: currently bus has an internal namespace "_bus_" which was used to store
+		// RPC and Confirm events. This namespace should not be consumed by the user.
+		if _, ok := namespacesSet["_bus_"]; ok {
+			return nil, errors.New("namespace _bus_ is reserved")
+		}
+
+		namespaces = make([]string, 0, len(namespacesSet)+1)
+		namespaces = append(namespaces, "_bus_")
+		for ns := range namespacesSet {
+			namespaces = append(namespaces, ns)
+		}
+	}
+
+	eventStorage, err := immuta.New(
+		immuta.WithLogsDirPath(logsDirPath),
+		immuta.WithReaderCount(5),
+		immuta.WithFastWrite(true),
+		immuta.WithNamespaces(namespaces...),
+	)
 	if err != nil {
 		return nil, err
 	}

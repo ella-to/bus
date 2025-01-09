@@ -6,6 +6,11 @@ import (
 	"ella.to/bus"
 )
 
+// NOTE:
+// make sure to run provide namepaces "a" before running the server
+// for example
+// go run cmd/bus/main.go server --namespaces a
+
 func main() {
 	client := bus.NewClient("http://localhost:2021")
 

@@ -16,10 +16,14 @@ import (
 	"ella.to/task"
 )
 
-func createBusServer(t *testing.T, eventLogs string) *bus.Client {
-	os.Remove(eventLogs)
+func createBusServer(t *testing.T, eventLogsDir string) *bus.Client {
+	os.RemoveAll(eventLogsDir)
 
-	storage, err := immuta.New(eventLogs, 10, true)
+	storage, err := immuta.New(
+		immuta.WithLogsDirPath(eventLogsDir),
+		immuta.WithNamespaces("a"),
+		immuta.WithFastWrite(true),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,14 +35,14 @@ func createBusServer(t *testing.T, eventLogs string) *bus.Client {
 	t.Cleanup(func() {
 		storage.Close()
 		server.Close()
-		os.Remove(eventLogs)
+		os.RemoveAll(eventLogsDir)
 	})
 
 	return bus.NewClient(server.URL)
 }
 
 func TestBasicPutUsage(t *testing.T) {
-	client := createBusServer(t, "TestBasicUsage.log")
+	client := createBusServer(t, "TestBasicUsage")
 
 	resp := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData("hello world"))
 	if resp.Error() != nil {
@@ -49,7 +53,7 @@ func TestBasicPutUsage(t *testing.T) {
 }
 
 func TestBasicPutGetUsage(t *testing.T) {
-	client := createBusServer(t, "TestBasicPutGetUsage.log")
+	client := createBusServer(t, "TestBasicPutGetUsage")
 
 	resp := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData("hello world"))
 	if resp.Error() != nil {
@@ -80,7 +84,7 @@ func TestBasicPutGetUsage(t *testing.T) {
 }
 
 func TestSinglePutMultipleGet(t *testing.T) {
-	client := createBusServer(t, "TestBasicUsage.log")
+	client := createBusServer(t, "TestBasicUsage")
 
 	n := 1_00
 	p := 10
@@ -144,7 +148,7 @@ func TestSinglePutMultipleGet(t *testing.T) {
 }
 
 func TestPullClose(t *testing.T) {
-	client := createBusServer(t, "TestPull.log")
+	client := createBusServer(t, "TestPull")
 
 	ctx, cancel := context.WithCancel(context.Background())
 

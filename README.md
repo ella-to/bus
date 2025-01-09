@@ -28,13 +28,13 @@
 To install `bus`, use:
 
 ```shell
-go get ella.to/bus@v0.3.0
+go get ella.to/bus@v0.3.3
 ```
 
 to install a cli, run the following
 
 ```shell
-go install ella.to/bus/cmd/bus@v0.3.0
+go install ella.to/bus/cmd/bus@v0.3.3
 ```
 
 and to run the server using docker, simply use the provided docker-compose and run it
@@ -42,6 +42,29 @@ and to run the server using docker, simply use the provided docker-compose and r
 ```
 docker-compose up
 ```
+
+## Namespaces
+
+Namespaces have been introduced to efficiently organize events by ensuring that not all events are saved in a single file. Each namespace has its own dedicated file. All namespaces must be defined when starting the Bus server by using the `--namespaces` flag.
+
+### What Are Namespaces?
+
+Namespaces are essentially the first segment of a topic. For example, in the topic a.b.c, the namespace is a.
+
+The Bus server also includes a special namespace called `_bus_`, reserved for internal bus operations. It is strongly recommended not to consume events from the `_bus_` namespace.
+
+### Best Practices for Namespaces
+
+When defining namespaces, consider your business logic and choose meaningful names that clearly represent their purpose. For instance:
+
+- If the Bus is used to handle RPC calls, a good namespace might be `rpc`.
+- For user-related operations, you might use user.
+
+### Key Features and Limitations
+
+Event Sequencing Within Namespaces: The Bus guarantees the sequence of events stored within a single namespace.
+No Cross-Namespace Sequencing Guarantee: The Bus does not guarantee the sequence of messages stored across different namespaces.
+By following these guidelines, you can keep your Bus server organized and aligned with your application's goals.
 
 ## Basic Example
 

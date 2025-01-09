@@ -39,14 +39,20 @@ func ServerCommand() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "path",
-				Usage: "path to events log file",
-				Value: "./bus_data/events.log",
+				Usage: "dir path to events log files",
+				Value: "./bus_data",
+			},
+			&cli.StringFlag{
+				Name:     "namespaces",
+				Usage:    "list of namespaces separated by comma",
+				Required: true,
 			},
 		},
 		Action: func(c *cli.Context) error {
 			logLevel := getLogLevel(getValue(os.Getenv("BUS_LOG_LEVEL"), "INFO"))
 			addr := getValue(os.Getenv("BUS_ADDR"), c.String("addr"))
 			path := getValue(os.Getenv("BUS_PATH"), c.String("path"))
+			namespaces := getSliceValues(os.Getenv("BUS_NAMESPACES"), c.String("namespaces"), ",")
 
 			slog.SetLogLoggerLevel(logLevel)
 
@@ -54,7 +60,7 @@ func ServerCommand() *cli.Command {
 				return err
 			}
 
-			server, err := bus.NewServer(addr, path)
+			server, err := bus.NewServer(addr, path, namespaces)
 			if err != nil {
 				return err
 			}
@@ -85,6 +91,13 @@ func ServerCommand() *cli.Command {
 			return server.Shutdown(ctx)
 		},
 	}
+}
+
+func getSliceValues(a string, b string, split string) []string {
+	if a != "" {
+		return strings.Split(a, split)
+	}
+	return strings.Split(b, split)
 }
 
 func getValue(seq ...string) string {

@@ -25,13 +25,22 @@ func DebugCommand() *cli.Command {
 				Usage: "directory to store events and consumers information",
 				Value: "./bus_data",
 			},
+			&cli.StringFlag{
+				Name:     "namespace",
+				Usage:    "namespace to filter events",
+				Required: true,
+			},
 		},
 		Action: func(c *cli.Context) error {
 			dir := c.String("dir")
+			namespace := c.String("namespace")
 
-			filepath := fmt.Sprintf("%s/events.log", dir)
-
-			im, err := immuta.New(filepath, 2, true)
+			im, err := immuta.New(
+				immuta.WithLogsDirPath(dir),
+				immuta.WithNamespaces(namespace),
+				immuta.WithFastWrite(true),
+				immuta.WithReaderCount(2),
+			)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -41,7 +50,7 @@ func DebugCommand() *cli.Command {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			stream := im.Stream(ctx, 0)
+			stream := im.Stream(ctx, namespace, 0)
 			defer stream.Done()
 
 			var count int64
