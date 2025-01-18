@@ -3,6 +3,7 @@ package bus_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -214,5 +215,71 @@ func TestEncodeDecodeEmptyEvent(t *testing.T) {
 
 	if value != buffer.String() {
 		t.Fatalf("expected %s but got %s", value, buffer.String())
+	}
+}
+
+func BenchmarkEncodeEventUsingRead(b *testing.B) {
+	b.ReportAllocs()
+
+	event := bus.Event{
+		Id:              "id-1234",
+		TraceId:         "trace-1234",
+		Subject:         "a.b.c",
+		ResponseSubject: "a.b.c.response",
+		CreatedAt:       time.Now(),
+		Index:           100,
+		Payload:         json.RawMessage(`{"key": "value"}`),
+	}
+
+	var buffer bytes.Buffer
+
+	for i := 0; i < b.N; i++ {
+		buffer.Reset()
+		io.Copy(&buffer, &event)
+	}
+}
+
+func BenchmarkEncodeEventUsingJSON(b *testing.B) {
+	b.ReportAllocs()
+
+	event := bus.Event{
+		Id:              "id-1234",
+		TraceId:         "trace-1234",
+		Subject:         "a.b.c",
+		ResponseSubject: "a.b.c.response",
+		CreatedAt:       time.Now(),
+		Payload:         json.RawMessage(`{"key": "value"}`),
+		Index:           100,
+	}
+
+	var buffer bytes.Buffer
+
+	for i := 0; i < b.N; i++ {
+		buffer.Reset()
+		json.NewEncoder(&buffer).Encode(&event)
+	}
+}
+
+func BenchmarkDecodeEventUsingWrite(b *testing.B) {
+	b.ReportAllocs()
+
+	input := []byte(`{"id":"id-1234","trace_id":"trace-1234","subject":"a.b.c","response_subject":"a.b.c.response","created_at":"2025-01-17T12:20:45-05:00","payload":{"key": "value"},"index":100}`)
+
+	var event bus.Event
+
+	for i := 0; i < b.N; i++ {
+		io.Copy(&event, bytes.NewReader(input))
+	}
+}
+
+func BenchmarkDecodeEventUsingJSON(b *testing.B) {
+	b.ReportAllocs()
+
+	input := []byte(`{"id":"id-1234","trace_id":"trace-1234","subject":"a.b.c","response_subject":"a.b.c.response","created_at":"2025-01-17T12:20:45-05:00","payload":{"key": "value"},"index":100}`)
+
+	var event bus.Event
+
+	for i := 0; i < b.N; i++ {
+		json.NewDecoder(bytes.NewReader(input)).Decode(&event)
 	}
 }
