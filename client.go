@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"ella.to/sse"
@@ -33,21 +32,9 @@ func (c *Client) Put(ctx context.Context, opts ...PutOpt) *Response {
 		}
 	}
 
-	evt := opt.event
-
-	pr, pw := io.Pipe()
-	go func() {
-		err := evt.encode(pw)
-		if err != nil {
-			pw.CloseWithError(err)
-		} else {
-			pw.Close()
-		}
-	}()
-
 	url := c.host + "/"
 
-	req, err := http.NewRequest(http.MethodPost, url, pr)
+	req, err := http.NewRequest(http.MethodPost, url, &opt.event)
 	if err != nil {
 		return &Response{err: err}
 	}
@@ -188,8 +175,9 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 					continue
 				}
 
-				if err := event.decode(strings.NewReader(*msg.Data)); err != nil {
-					if !yield(nil, fmt.Errorf("failed to decode event '%s': %w", *msg.Data, err)) {
+				_, err = event.Write([]byte(*msg.Data))
+				if err != nil {
+					if !yield(nil, fmt.Errorf("failed to write event '%s': %w", *msg.Data, err)) {
 						return
 					}
 					continue

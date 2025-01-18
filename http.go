@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -48,7 +49,7 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 	// decode the request body to event
 	var event Event
 
-	if err := event.decode(r.Body); err != nil {
+	if _, err := io.Copy(&event, r.Body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -65,13 +66,8 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 
 	namespaceIdx := strings.Index(event.Subject, ".")
 
-	err := h.runner.Submit(ctx, func(ctx context.Context) error {
-		err := event.encode(&h.buffer)
-		if err != nil {
-			return err
-		}
-
-		eventIndex, _, err = h.eventsLog.Append(ctx, event.Subject[:namespaceIdx], &h.buffer)
+	err := h.runner.Submit(ctx, func(ctx context.Context) (err error) {
+		eventIndex, _, err = h.eventsLog.Append(ctx, event.Subject[:namespaceIdx], &event)
 		if err != nil {
 			return err
 		}
@@ -154,7 +150,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var event Event
-		err = event.decode(r)
+		_, err = io.Copy(&event, r)
 		r.Done()
 		if err != nil {
 			pusher.Push(newSseError(err))
@@ -390,7 +386,7 @@ func newSseError(err error) *sse.Message {
 func newSseEvent(event *Event) (*sse.Message, error) {
 	var sb strings.Builder
 
-	err := event.encode(&sb)
+	_, err := io.Copy(&sb, event)
 	if err != nil {
 		return nil, err
 	}

@@ -1,12 +1,15 @@
 package bus_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -168,4 +171,48 @@ func TestPullClose(t *testing.T) {
 	cancel()
 
 	time.Sleep(1 * time.Second)
+}
+
+func TestEncodeDecodeEvent(t *testing.T) {
+	value := `{"id":"123","trace_id":"trace-123","subject":"a.b.c","response_subject":"a.b.c.response","created_at":"2025-01-18T06:55:35-05:00","payload":{"a": 1, "b": 2},"index":100}`
+
+	var event bus.Event
+
+	_, err := io.Copy(&event, strings.NewReader(value))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buffer bytes.Buffer
+
+	_, err = io.Copy(&buffer, &event)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if value != buffer.String() {
+		t.Fatalf("expected %s but got %s", value, buffer.String())
+	}
+}
+
+func TestEncodeDecodeEmptyEvent(t *testing.T) {
+	value := `{"id":"","subject":"","created_at":"0001-01-01T00:00:00Z"}`
+
+	var event bus.Event
+
+	_, err := io.Copy(&event, strings.NewReader(value))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buffer bytes.Buffer
+
+	_, err = io.Copy(&buffer, &event)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if value != buffer.String() {
+		t.Fatalf("expected %s but got %s", value, buffer.String())
+	}
 }

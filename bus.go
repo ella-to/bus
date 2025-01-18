@@ -1,12 +1,14 @@
 package bus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"iter"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,8 +24,9 @@ var (
 
 type Event struct {
 	Id              string          `json:"id"`
+	TraceId         string          `json:"trace_id,omitempty"`
 	Subject         string          `json:"subject"`
-	ResponseSubject string          `json:"response_subject"`
+	ResponseSubject string          `json:"response_subject,omitempty"`
 	Payload         json.RawMessage `json:"payload"`
 	CreatedAt       time.Time       `json:"created_at"`
 	Index           int64           `json:"index"`
@@ -32,14 +35,571 @@ type Event struct {
 	consumerId string
 	acker      Acker
 	putter     Putter
+
+	// Internal state for serialization
+	writeState int // Tracks which field we're writing
+	tc         trackCopy
 }
 
-func (e *Event) encode(w io.Writer) error {
-	return json.NewEncoder(w).Encode(e)
+// NOTE: I had to implement Read method to enhance the performance of the code
+// with the current implementation I gained around 50x performance improvement
+func (e *Event) Read(p []byte) (n int, err error) {
+	for len(p) > 0 {
+		switch e.writeState {
+		case 0:
+			{
+				n1 := e.tc.Copy(p, []byte(`{`), 0)
+				n += n1
+				p = p[n1:]
+				if n1 < 1 {
+					return n, nil
+				}
+				e.writeState = 1
+			}
+
+		case 1: // Write "id" field
+			{
+				field := []byte(`"id":"`)
+				n1 := e.tc.Copy(p, field, 1)
+				n += n1
+				p = p[n1:]
+				if n1 < len(field) {
+					return n, nil
+				}
+
+				e.writeState = 2
+			}
+
+		case 2: // Write Id value
+			{
+				if len(e.Id) == 0 {
+					e.writeState = 3
+					continue
+				}
+
+				n1 := e.tc.Copy(p, []byte(e.Id), 2)
+				n += n1
+				p = p[n1:]
+				if n1 < len(e.Id) {
+					return n, nil
+				}
+
+				e.writeState = 3
+			}
+
+		case 3: // close "id" field
+			{
+				n1 := e.tc.Copy(p, []byte(`"`), 3)
+				n += n1
+				p = p[n1:]
+				if n1 < 1 {
+					return n, nil
+				}
+
+				e.writeState = 4
+			}
+
+		case 4: // Write "trace_id" field
+			{
+				if len(e.TraceId) == 0 {
+					e.writeState = 7 // skip trace_id field
+					continue
+				}
+
+				field := []byte(`,"trace_id":"`)
+				n1 := e.tc.Copy(p, field, 4)
+				n += n1
+				p = p[n1:]
+				if n1 < len(field) {
+					return n, nil
+				}
+
+				e.writeState = 5
+			}
+
+		case 5: // Write TraceId value
+			{
+				n1 := e.tc.Copy(p, []byte(e.TraceId), 5)
+				n += n1
+				p = p[n1:]
+				if n1 < len(e.TraceId) {
+					return n, nil
+				}
+
+				e.writeState = 6
+			}
+
+		case 6: // close "trace_id" field
+			{
+				n1 := e.tc.Copy(p, []byte(`"`), 6)
+				n += n1
+				p = p[n1:]
+				if n1 < 1 {
+					return n, nil
+				}
+
+				e.writeState = 7
+			}
+
+		case 7: // Write "subject" field
+			{
+				field := []byte(`,"subject":"`)
+				n1 := e.tc.Copy(p, field, 7)
+				n += n1
+				p = p[n1:]
+				if n1 < len(field) {
+					return n, nil
+				}
+
+				e.writeState = 8
+			}
+
+		case 8: // Write Subject value
+			{
+				n1 := e.tc.Copy(p, []byte(e.Subject), 8)
+				n += n1
+				p = p[n1:]
+				if n1 < len(e.Subject) {
+					return n, nil
+				}
+
+				e.writeState = 9
+			}
+
+		case 9: // close "subject" field
+			{
+				n1 := e.tc.Copy(p, []byte(`"`), 9)
+				n += n1
+				p = p[n1:]
+				if n1 < 1 {
+					return n, nil
+				}
+
+				e.writeState = 10
+			}
+
+		case 10: // Write "response_subject" field
+			{
+				if len(e.ResponseSubject) == 0 {
+					e.writeState = 13 // skip response_subject field
+					continue
+				}
+
+				field := []byte(`,"response_subject":"`)
+				n1 := e.tc.Copy(p, field, 10)
+				n += n1
+				p = p[n1:]
+				if n1 < len(field) {
+					return n, nil
+				}
+
+				e.writeState = 11
+			}
+
+		case 11: // Write ResponseSubject value
+			{
+				n1 := e.tc.Copy(p, []byte(e.ResponseSubject), 11)
+				n += n1
+				p = p[n1:]
+				if n1 < len(e.ResponseSubject) {
+					return n, nil
+				}
+
+				e.writeState = 12
+			}
+
+		case 12: // close "response_subject" field
+			{
+				n1 := e.tc.Copy(p, []byte(`"`), 12)
+				n += n1
+				p = p[n1:]
+				if n1 < 1 {
+					return n, nil
+				}
+
+				e.writeState = 13
+			}
+
+		case 13: // Write "created_at" field
+			{
+				field := []byte(`,"created_at":"`)
+				n1 := e.tc.Copy(p, field, 13)
+				n += n1
+				p = p[n1:]
+				if n1 < len(field) {
+					return n, nil
+				}
+
+				e.writeState = 14
+			}
+
+		case 14: // Write CreatedAt value
+			{
+				createdAt := e.CreatedAt.Format(time.RFC3339)
+				n1 := e.tc.Copy(p, []byte(createdAt), 14)
+				n += n1
+				p = p[n1:]
+				if n1 < len(createdAt) {
+					return n, nil
+				}
+
+				e.writeState = 15
+			}
+
+		case 15: // close "created_at" field
+			{
+				n1 := e.tc.Copy(p, []byte(`"`), 15)
+				n += n1
+				p = p[n1:]
+				if n1 < 1 {
+					return n, nil
+				}
+
+				e.writeState = 16
+			}
+
+		case 16: // Write "payload" field
+			{
+				if len(e.Payload) == 0 {
+					e.writeState = 18 // skip payload field
+					continue
+				}
+
+				field := []byte(`,"payload":`)
+				n1 := e.tc.Copy(p, field, 16)
+				n += n1
+				p = p[n1:]
+				if n1 < len(field) {
+					return n, nil
+				}
+
+				e.writeState = 17
+			}
+
+		case 17: // Write Payload value
+			{
+				n1 := e.tc.Copy(p, e.Payload, 17)
+				n += n1
+				p = p[n1:]
+				if n1 < len(e.Payload) {
+					return n, nil
+				}
+
+				e.writeState = 18
+			}
+
+		case 18: // Write Index
+			{
+				if e.Index == 0 {
+					e.writeState = 20 // skip index field
+					continue
+				}
+
+				field := []byte(`,"index":`)
+				n1 := e.tc.Copy(p, field, 18)
+				n += n1
+				p = p[n1:]
+				if n1 < len(field) {
+					return n, nil
+				}
+
+				e.writeState = 19
+			}
+
+		case 19: // Write Index value
+			{
+				index := strconv.FormatInt(e.Index, 10)
+				n1 := e.tc.Copy(p, []byte(index), 19)
+				n += n1
+				p = p[n1:]
+				if n1 < len(index) {
+					return n, nil
+				}
+
+				e.writeState = 20
+			}
+
+		case 20: // close
+			{
+				n1 := e.tc.Copy(p, []byte(`}`), 18)
+				n += n1
+				p = p[n1:]
+				if n1 < 1 {
+					return n, nil
+				}
+
+				e.writeState = 21
+			}
+
+		default:
+			return n, io.EOF
+		}
+	}
+
+	return n, nil
 }
 
-func (e *Event) decode(r io.Reader) error {
-	return json.NewDecoder(r).Decode(e)
+func (e *Event) Write(b []byte) (int, error) {
+	if len(b) == 0 {
+		return 0, errors.New("empty input")
+	}
+
+	// Skip leading whitespace
+	pos := 0
+	for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+		pos++
+	}
+
+	// Expect opening brace
+	if pos >= len(b) || b[pos] != '{' {
+		return 0, errors.New("expected opening brace")
+	}
+	pos++
+
+	for pos < len(b) {
+		// Skip whitespace
+		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+			pos++
+		}
+
+		if pos >= len(b) {
+			return 0, errors.New("unexpected end of input")
+		}
+
+		// Check for closing brace
+		if b[pos] == '}' {
+			pos++
+			break
+		}
+
+		// Expect quote for field name
+		if b[pos] != '"' {
+			return 0, errors.New("expected quote before field name")
+		}
+		pos++
+
+		// Read field name
+		fieldStart := pos
+		for pos < len(b) && b[pos] != '"' {
+			pos++
+		}
+		if pos >= len(b) {
+			return 0, errors.New("unterminated field name")
+		}
+		fieldName := string(b[fieldStart:pos])
+		pos++ // Skip closing quote
+
+		// Skip whitespace and colon
+		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+			pos++
+		}
+		if pos >= len(b) || b[pos] != ':' {
+			return 0, errors.New("expected colon after field name")
+		}
+		pos++
+
+		// Skip whitespace before value
+		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+			pos++
+		}
+
+		// Parse value based on field name
+		switch fieldName {
+		case "id":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			e.Id = val
+			pos += newPos
+
+		case "trace_id":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			e.TraceId = val
+			pos += newPos
+
+		case "subject":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			e.Subject = val
+			pos += newPos
+
+		case "response_subject":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			e.ResponseSubject = val
+			pos += newPos
+
+		case "created_at":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			// Parse ISO 8601 timestamp
+			t, err := time.Parse(time.RFC3339, val)
+			if err != nil {
+				return 0, errors.New("invalid timestamp format")
+			}
+			e.CreatedAt = t
+			pos += newPos
+
+		case "payload":
+			if b[pos] == 'n' && pos+3 < len(b) && string(b[pos:pos+4]) == "null" {
+				e.Payload = nil
+				pos += 4
+			} else {
+				// Find the end of the JSON value (could be object, array, string, number, etc.)
+				depth := 0
+				dataStart := pos
+				inString := false
+				for pos < len(b) {
+					if !inString {
+						if b[pos] == '{' || b[pos] == '[' {
+							depth++
+						} else if b[pos] == '}' || b[pos] == ']' {
+							depth--
+							if depth < 0 {
+								break
+							}
+						} else if b[pos] == '"' {
+							inString = true
+						} else if b[pos] == ',' && depth == 0 {
+							break
+						}
+					} else {
+						if b[pos] == '\\' {
+							pos++
+						} else if b[pos] == '"' {
+							inString = false
+						}
+					}
+					pos++
+				}
+				e.Payload = json.RawMessage(b[dataStart:pos])
+			}
+		case "index":
+			val, newPos, err := parseNumber(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+
+			index, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return 0, err
+			}
+
+			e.Index = index
+			pos += newPos
+		}
+
+		// Skip whitespace
+		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+			pos++
+		}
+
+		// Check for comma or closing brace
+		if pos >= len(b) {
+			return 0, errors.New("unexpected end of input")
+		}
+		if b[pos] == ',' {
+			pos++
+		} else if b[pos] != '}' {
+			return 0, errors.New("expected comma or closing brace")
+		}
+	}
+
+	return pos, nil
+}
+
+// Helper function to parse a JSON number
+func parseNumber(b []byte) (string, int, error) {
+	if len(b) == 0 {
+		return "", 0, errors.New("expected number")
+	}
+
+	pos := 0
+	if b[pos] == '-' {
+		pos++
+	}
+
+	if pos >= len(b) || (b[pos] < '0' || b[pos] > '9') {
+		return "", 0, errors.New("expected number")
+	}
+
+	for pos < len(b) && b[pos] >= '0' && b[pos] <= '9' {
+		pos++
+	}
+
+	if pos < len(b) && b[pos] == '.' {
+		pos++
+		for pos < len(b) && b[pos] >= '0' && b[pos] <= '9' {
+			pos++
+		}
+	}
+
+	if pos < len(b) && (b[pos] == 'e' || b[pos] == 'E') {
+		pos++
+		if pos < len(b) && (b[pos] == '+' || b[pos] == '-') {
+			pos++
+		}
+		if pos >= len(b) || (b[pos] < '0' || b[pos] > '9') {
+			return "", 0, errors.New("expected number")
+		}
+
+		for pos < len(b) && b[pos] >= '0' && b[pos] <= '9' {
+			pos++
+		}
+
+	}
+
+	return string(b[:pos]), pos, nil
+}
+
+// Helper function to parse a JSON string
+func parseString(b []byte) (string, int, error) {
+	if len(b) == 0 || b[0] != '"' {
+		return "", 0, errors.New("expected string")
+	}
+
+	pos := 1
+	var result bytes.Buffer
+	for pos < len(b) {
+		if b[pos] == '\\' {
+			if pos+1 >= len(b) {
+				return "", 0, errors.New("incomplete escape sequence")
+			}
+			pos++
+			switch b[pos] {
+			case '"', '\\', '/':
+				result.WriteByte(b[pos])
+			case 'b':
+				result.WriteByte('\b')
+			case 'f':
+				result.WriteByte('\f')
+			case 'n':
+				result.WriteByte('\n')
+			case 'r':
+				result.WriteByte('\r')
+			case 't':
+				result.WriteByte('\t')
+			default:
+				return "", 0, errors.New("invalid escape sequence")
+			}
+		} else if b[pos] == '"' {
+			return result.String(), pos + 1, nil
+		} else {
+			result.WriteByte(b[pos])
+		}
+		pos++
+	}
+	return "", 0, errors.New("unterminated string")
 }
 
 func (e *Event) validate() error {
@@ -366,4 +926,27 @@ func (d *dataOpt) configureAck(a *ackOpt) error {
 
 func WithData(data any) *dataOpt {
 	return &dataOpt{data}
+}
+
+//
+// Trace Id
+//
+
+type traceIdOpt struct {
+	value string
+}
+
+var _ PutOpt = (*traceIdOpt)(nil)
+
+func (o *traceIdOpt) configurePut(opt *putOpt) error {
+	if opt.event.TraceId != "" {
+		return fmt.Errorf("trace id option already set to %s", opt.event.TraceId)
+	}
+
+	opt.event.TraceId = o.value
+	return nil
+}
+
+func WithTraceId(traceId string) *traceIdOpt {
+	return &traceIdOpt{traceId}
 }
