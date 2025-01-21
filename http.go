@@ -268,22 +268,7 @@ func (h *Handler) Ack(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func NewHandler(eventLogs *immuta.Storage, runner task.Runner) *Handler {
-	h := &Handler{
-		mux:           http.NewServeMux(),
-		eventsLog:     eventLogs,
-		runner:        runner,
-		waitingAckMap: make(map[string]chan struct{}),
-	}
-
-	h.mux.HandleFunc("POST /", h.Put)
-	h.mux.HandleFunc("GET /", h.Get)
-	h.mux.HandleFunc("PUT /", h.Ack)
-
-	return h
-}
-
-func NewServer(addr string, logsDirPath string, namespaces []string) (*http.Server, error) {
+func CreateHandler(logsDirPath string, namespaces []string) (http.Handler, error) {
 	{
 		// This block is used to validate the namespaces
 		// and make sure there is no reserved and duplicate namespaces
@@ -318,7 +303,29 @@ func NewServer(addr string, logsDirPath string, namespaces []string) (*http.Serv
 
 	runner := task.NewRunner(task.WithWorkerSize(1))
 
-	handler := NewHandler(eventStorage, runner)
+	return NewHandler(eventStorage, runner), nil
+}
+
+func NewHandler(eventLogs *immuta.Storage, runner task.Runner) *Handler {
+	h := &Handler{
+		mux:           http.NewServeMux(),
+		eventsLog:     eventLogs,
+		runner:        runner,
+		waitingAckMap: make(map[string]chan struct{}),
+	}
+
+	h.mux.HandleFunc("POST /", h.Put)
+	h.mux.HandleFunc("GET /", h.Get)
+	h.mux.HandleFunc("PUT /", h.Ack)
+
+	return h
+}
+
+func NewServer(addr string, logsDirPath string, namespaces []string) (*http.Server, error) {
+	handler, err := CreateHandler(logsDirPath, namespaces)
+	if err != nil {
+		return nil, err
+	}
 
 	server := &http.Server{
 		Addr:    addr,
