@@ -43,9 +43,8 @@ func ServerCommand() *cli.Command {
 				Value: "./bus_data",
 			},
 			&cli.StringFlag{
-				Name:     "namespaces",
-				Usage:    "list of namespaces separated by comma",
-				Required: true,
+				Name:  "namespaces",
+				Usage: "list of namespaces separated by comma",
 			},
 		},
 		Action: func(c *cli.Context) error {
@@ -55,6 +54,10 @@ func ServerCommand() *cli.Command {
 			namespaces := getSliceValues(os.Getenv("BUS_NAMESPACES"), c.String("namespaces"), ",")
 
 			slog.SetLogLoggerLevel(logLevel)
+
+			if len(namespaces) == 0 {
+				return fmt.Errorf("no namespaces provided")
+			}
 
 			if err := os.MkdirAll(filepath.Base(path), os.ModePerm); err != nil {
 				return err
@@ -72,7 +75,7 @@ func ServerCommand() *cli.Command {
 			// Goroutine to start the server
 			go func() {
 				fmt.Printf(logo, bus.Version, bus.GitCommit)
-				slog.Info("server started", "address", addr, "events_log_file", path)
+				slog.Info("server started", "address", addr, "namespaces", namespaces, "events_log_file", path)
 
 				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 					slog.Error("failed to start server", "error", err)
@@ -94,9 +97,14 @@ func ServerCommand() *cli.Command {
 }
 
 func getSliceValues(a string, b string, split string) []string {
-	if a != "" {
-		return strings.Split(a, split)
+	if a == "" {
+		a = b
 	}
+
+	if a == "" {
+		return []string{}
+	}
+
 	return strings.Split(b, split)
 }
 
