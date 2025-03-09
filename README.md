@@ -28,13 +28,13 @@
 To install `bus`, use:
 
 ```shell
-go get ella.to/bus@v0.3.5
+go get ella.to/bus@v0.3.6
 ```
 
 to install a cli, run the following
 
 ```shell
-go install ella.to/bus/cmd/bus@v0.3.5
+go install ella.to/bus/cmd/bus@v0.3.6
 ```
 
 and to run the server using docker, simply use the provided docker-compose and run it
