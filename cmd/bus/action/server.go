@@ -53,6 +53,10 @@ func ServerCommand() *cli.Command {
 			path := getValue(os.Getenv("BUS_PATH"), c.String("path"))
 			namespaces := getSliceValues(os.Getenv("BUS_NAMESPACES"), c.String("namespaces"), ",")
 
+			if len(namespaces) == 0 {
+				return fmt.Errorf("no namespaces provided")
+			}
+
 			slog.SetLogLoggerLevel(logLevel)
 
 			if len(namespaces) == 0 {
@@ -105,7 +109,18 @@ func getSliceValues(a string, b string, split string) []string {
 		return []string{}
 	}
 
-	return strings.Split(b, split)
+	results := strings.Split(a, split)
+
+	// Trim spaces and remove empty strings
+	var filtered []string
+	for _, item := range results {
+		trimmed := strings.TrimSpace(item)
+		if trimmed != "" {
+			filtered = append(filtered, trimmed)
+		}
+	}
+
+	return filtered
 }
 
 func getValue(seq ...string) string {
