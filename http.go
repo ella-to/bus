@@ -383,10 +383,9 @@ func defaultStringOneOf(s string, def string, opts ...string) string {
 }
 
 func newSseError(err error) *sse.Message {
-	errMsg := err.Error()
 	return &sse.Message{
 		Event: "error",
-		Data:  &errMsg,
+		Data:  err.Error(),
 	}
 }
 
@@ -398,10 +397,8 @@ func newSseEvent(event *Event) (*sse.Message, error) {
 		return nil, err
 	}
 
-	msg := sb.String()
-
 	return &sse.Message{
 		Event: "event",
-		Data:  &msg,
+		Data:  sb.String(),
 	}, nil
 }

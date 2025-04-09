@@ -19,9 +19,11 @@ type Client struct {
 	host string
 }
 
-var _ Putter = (*Client)(nil)
-var _ Getter = (*Client)(nil)
-var _ Acker = (*Client)(nil)
+var (
+	_ Putter = (*Client)(nil)
+	_ Getter = (*Client)(nil)
+	_ Acker  = (*Client)(nil)
+)
 
 // POST /
 func (c *Client) Put(ctx context.Context, opts ...PutOpt) *Response {
@@ -171,13 +173,13 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 
 			switch msg.Event {
 			case "event":
-				if msg.Data == nil {
+				if msg.Data == "" {
 					continue
 				}
 
-				_, err = event.Write([]byte(*msg.Data))
+				_, err = event.Write([]byte(msg.Data))
 				if err != nil {
-					if !yield(nil, fmt.Errorf("failed to write event '%s': %w", *msg.Data, err)) {
+					if !yield(nil, fmt.Errorf("failed to write event '%s': %w", msg.Data, err)) {
 						return
 					}
 					continue
@@ -196,11 +198,11 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 				}
 
 			case "error":
-				if msg.Data == nil {
+				if msg.Data == "" {
 					continue
 				}
 
-				if !yield(nil, fmt.Errorf("%s", *msg.Data)) {
+				if !yield(nil, fmt.Errorf("%s", msg.Data)) {
 					return
 				}
 
