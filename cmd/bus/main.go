@@ -21,6 +21,7 @@ func main() {
 			action.PutCommand(),
 			action.AckCommand(),
 			action.DebugCommand(),
+			action.CopyCommand(),
 		},
 	}
 
