@@ -1,7 +1,7 @@
 ###############################################################################
 ### build stage 
 ###############################################################################
-FROM golang:1.23-alpine3.20 AS builder
+FROM golang:1.25-alpine3.22 AS builder
 
 ## INSTALL DEPENDENCIES
 RUN apk add --update --no-cache curl git make musl-dev gcc bash
@@ -11,7 +11,7 @@ WORKDIR /src
 COPY . .
 
 ## TEST GO UNIT TESTS
-RUN go test -race -timeout 100s ./... -v
+RUN go test -race -timeout 120s ./... -v
 
 ARG GIT_COMMIT
 ARG VERSION

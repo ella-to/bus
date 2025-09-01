@@ -1,6 +1,6 @@
 module ella.to/bus
 
-go 1.23.1
+go 1.25
 
 require (
 	ella.to/immuta v0.0.5
