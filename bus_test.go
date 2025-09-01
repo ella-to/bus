@@ -45,6 +45,17 @@ func createBusServer(t *testing.T, eventLogsDir string) *bus.Client {
 	return bus.NewClient(server.URL)
 }
 
+func TestLargeAmountPutUsage(t *testing.T) {
+	client := createBusServer(t, "./TestLargeAmountPutUsage")
+
+	for range 100000 {
+		resp := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData("hello world"))
+		if resp.Error() != nil {
+			t.Fatal(resp.Error())
+		}
+	}
+}
+
 func TestBasicPutUsage(t *testing.T) {
 	client := createBusServer(t, "TestBasicUsage")
 
