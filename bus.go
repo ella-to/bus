@@ -871,6 +871,10 @@ func WithConfirm(n int) PutOpt {
 			return errors.New("confirm count should be greater than 0")
 		}
 
+		if n == 0 {
+			return nil
+		}
+
 		if p.event.ResponseSubject != "" {
 			return errors.New("response subject already set")
 		}
