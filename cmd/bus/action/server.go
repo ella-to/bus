@@ -50,7 +50,7 @@ func ServerCommand() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "compression",
-				Usage: `set compression algorithm to use for event log files. Options are: ("none" or "") and "s2"`,
+				Usage: `set compression algorithm to use for event log files. Options are: "none", "s2"`,
 				Value: "s2",
 			},
 		},

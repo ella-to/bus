@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	Version   = "dev"
+	Version   = "v0.3.13"
 	GitCommit = ""
 )
 
@@ -632,7 +632,7 @@ func (e *Event) Ack(ctx context.Context, opts ...AckOpt) error {
 		return nil
 	}
 
-	var putOpts = []PutOpt{
+	putOpts := []PutOpt{
 		WithSubject(e.ResponseSubject),
 	}
 
@@ -777,8 +777,10 @@ type Acker interface {
 
 type subjectOpt string
 
-var _ PutOpt = (*subjectOpt)(nil)
-var _ GetOpt = (*subjectOpt)(nil)
+var (
+	_ PutOpt = (*subjectOpt)(nil)
+	_ GetOpt = (*subjectOpt)(nil)
+)
 
 func (s subjectOpt) configurePut(p *putOpt) error {
 	if p.event.Subject != "" {
