@@ -66,6 +66,9 @@ func CopyCommand() *cli.Command {
 				immuta.WithFastWrite(true),
 				immuta.WithReaderCount(2),
 			)
+			if err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -79,10 +82,10 @@ func CopyCommand() *cli.Command {
 
 			for {
 				err := func() error {
-					ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+					timeoutCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 					defer cancel()
 
-					r, s, err := stream.Next(ctx)
+					r, s, err := stream.Next(timeoutCtx)
 					if err != nil {
 						return err
 					}
@@ -103,7 +106,7 @@ func CopyCommand() *cli.Command {
 						return nil
 					}
 
-					_, _, err = immutaDst.Append(ctx, dst, &event)
+					_, _, err = immutaDst.Append(timeoutCtx, dst, &event)
 					if err != nil {
 						return err
 					}

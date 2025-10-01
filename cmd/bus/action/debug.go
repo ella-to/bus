@@ -58,10 +58,10 @@ func DebugCommand() *cli.Command {
 
 			for {
 				err := func() error {
-					ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+					timeoutCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 					defer cancel()
 
-					r, s, err := stream.Next(ctx)
+					r, s, err := stream.Next(timeoutCtx)
 					if err != nil {
 						return err
 					}

@@ -15,6 +15,8 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"ella.to/bus"
+	"ella.to/bus/internal/compress"
+	"ella.to/immuta"
 )
 
 const logo = `
@@ -46,12 +48,28 @@ func ServerCommand() *cli.Command {
 				Name:  "namespaces",
 				Usage: "list of namespaces separated by comma",
 			},
+			&cli.StringFlag{
+				Name:  "compression",
+				Usage: `set compression algorithm to use for event log files. Options are: ("none" or "") and "s2"`,
+				Value: "s2",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			logLevel := getLogLevel(getValue(os.Getenv("BUS_LOG_LEVEL"), "INFO"))
 			addr := getValue(os.Getenv("BUS_ADDR"), c.String("addr"))
 			path := getValue(os.Getenv("BUS_PATH"), c.String("path"))
 			namespaces := getSliceValues(os.Getenv("BUS_NAMESPACES"), c.String("namespaces"), ",")
+			compression := getValue(os.Getenv("BUS_COMPRESSION"), c.String("compression"))
+
+			var compressor immuta.Compressor
+			switch strings.ToLower(compression) {
+			case "none":
+				compressor = nil
+			case "s2", "":
+				compressor = compress.NewS2Compressor()
+			default:
+				return fmt.Errorf("unknown compression algorithm: %s", compression)
+			}
 
 			if len(namespaces) == 0 {
 				return fmt.Errorf("no namespaces provided")
@@ -67,7 +85,7 @@ func ServerCommand() *cli.Command {
 				return err
 			}
 
-			server, err := bus.NewServer(addr, path, namespaces)
+			server, err := bus.NewServer(addr, path, namespaces, compressor)
 			if err != nil {
 				return err
 			}
@@ -79,7 +97,7 @@ func ServerCommand() *cli.Command {
 			// Goroutine to start the server
 			go func() {
 				fmt.Printf(logo, bus.Version, bus.GitCommit)
-				slog.Info("server started", "address", addr, "namespaces", namespaces, "events_log_file", path)
+				slog.Info("server started", "address", addr, "namespaces", namespaces, "events_log_file", path, "compression", compression, "log_level", logLevel.String())
 
 				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 					slog.Error("failed to start server", "error", err)

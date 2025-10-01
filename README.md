@@ -28,13 +28,13 @@
 To install `bus`, use:
 
 ```shell
-go get ella.to/bus@v0.3.9
+go get ella.to/bus
 ```
 
 to install a cli, run the following
 
 ```shell
-go install ella.to/bus/cmd/bus@v0.3.9
+go install ella.to/bus/cmd/bus
 ```
 
 and to run the server using docker, simply use the provided docker-compose and run it
@@ -46,6 +46,13 @@ docker-compose up
 ## Namespaces
 
 Namespaces have been introduced to efficiently organize events by ensuring that not all events are saved in a single file. Each namespace has its own dedicated file. All namespaces must be defined when starting the Bus server by using the `--namespaces` flag.
+
+## Compression
+
+Bus supports **S2 compression** for fast encoding and decoding. Compression can be configured using the `BUS_COMPRESSION` environment variable or `--compression` flag with the following values:
+
+- `"none"` - No compression
+- `"s2"` - S2 compression (default)
 
 ### What Are Namespaces?
 
