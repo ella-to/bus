@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	ella.to/immuta v0.0.6
-	ella.to/sse v0.1.0
+	ella.to/sse v0.1.1
 	ella.to/task v0.0.5
 	github.com/rs/xid v1.6.0
 	github.com/urfave/cli/v2 v2.27.6

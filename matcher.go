@@ -66,17 +66,18 @@ func ValidateSubject(subject string) error {
 
 	for i, c := range subject {
 		if i == 0 {
-			if c == '.' {
-				return errors.New("subject should not starts with .")
-			} else if c == '*' {
+			switch c {
+			case '.':
+				return errors.New("subject should not starts with dot")
+			case '*':
 				return errors.New("subject should not starts with *")
-			} else if c == '>' {
+			case '>':
 				return errors.New("subject should not starts with >")
 			}
 		}
 
 		if i == len(subject)-1 && c == '.' {
-			return errors.New("subject should not ends with .")
+			return errors.New("subject should not ends with dot")
 		}
 
 		if c == ' ' {

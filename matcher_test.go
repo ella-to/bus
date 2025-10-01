@@ -85,12 +85,12 @@ func TestValidateSubject(t *testing.T) {
 		{"Valid subject with >", "a.b.>", false, ""},
 
 		// Invalid subjects
-		{"Should always start with alphanumeric 1", ".a.b", true, "subject should not starts with ."},
+		{"Should always start with alphanumeric 1", ".a.b", true, "subject should not starts with dot"},
 		{"Should always start with alphanumeric 2", "*", true, "subject should not starts with *"},
 		{"Should always start with alphanumeric 3", ">", true, "subject should not starts with >"},
 		{"Empty subject", "", true, "subject is empty"},
-		{"Starts with .", ".a.b", true, "subject should not starts with ."},
-		{"Ends with .", "a.b.", true, "subject should not ends with ."},
+		{"Starts with .", ".a.b", true, "subject should not starts with dot"},
+		{"Ends with .", "a.b.", true, "subject should not ends with dot"},
 		{"Contains spaces", "a. b.c", true, "subject should not have spaces"},
 		{"Series of dots", "a..b.c", true, "subject should not have series of dots one after another"},
 		{"Invalid character", "a.b.c$", true, "subject should have only consists of alphanumerics, dots, *, > and _"},
