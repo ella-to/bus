@@ -85,9 +85,14 @@ func ServerCommand() *cli.Command {
 				return err
 			}
 
-			server, err := bus.NewServer(addr, path, namespaces, compressor)
+			handler, err := bus.CreateHandler(path, namespaces, compressor)
 			if err != nil {
 				return err
+			}
+
+			server := &http.Server{
+				Addr:    addr,
+				Handler: handler,
 			}
 
 			// Channel to listen for interrupt signals
@@ -107,6 +112,11 @@ func ServerCommand() *cli.Command {
 			// Wait for interrupt signal (Ctrl+C)
 			<-stop
 			slog.Info("Shutting down server...")
+
+			// closes all the streams and causes all connected clients to disconnect
+			if err = handler.Close(); err != nil {
+				slog.Error("failed to close handler", "error", err)
+			}
 
 			// Create a context with a timeout for the shutdown
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

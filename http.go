@@ -38,6 +38,10 @@ type Handler struct {
 	runner        task.Runner
 }
 
+func (h *Handler) Close() error {
+	return h.eventsLog.Close()
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
@@ -142,7 +146,9 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		r, _, err := stream.Next(ctx)
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, immuta.ErrStorageClosed) {
+			// the client has closed the connection or the server is shutting down
+			// in both cases we should return and the defer will send the done message and also close the pusher
 			return
 		} else if err != nil {
 			pusher.Push(newSseError(err))
@@ -283,7 +289,7 @@ func (h *Handler) Ack(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func CreateHandler(logsDirPath string, namespaces []string, compressor immuta.Compressor) (http.Handler, error) {
+func CreateHandler(logsDirPath string, namespaces []string, compressor immuta.Compressor) (*Handler, error) {
 	{
 		// This block is used to validate the namespaces
 		// and make sure there is no reserved and duplicate namespaces
