@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -388,10 +389,8 @@ func defaultStringOneOf(s string, def string, opts ...string) string {
 		return def
 	}
 
-	for _, opt := range opts {
-		if s == opt {
-			return s
-		}
+	if slices.Contains(opts, s) {
+		return s
 	}
 
 	return def
@@ -399,7 +398,7 @@ func defaultStringOneOf(s string, def string, opts ...string) string {
 
 func newSseError(err error) *sse.Message {
 	return &sse.Message{
-		Event: "error",
+		Event: errorType,
 		Data:  err.Error(),
 	}
 }
@@ -413,7 +412,7 @@ func newSseEvent(event *Event) (*sse.Message, error) {
 	}
 
 	return &sse.Message{
-		Event: "event",
+		Event: msgType,
 		Data:  sb.String(),
 	}, nil
 }

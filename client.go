@@ -172,7 +172,7 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 			}
 
 			switch msg.Event {
-			case "event":
+			case msgType:
 				if msg.Data == "" {
 					continue
 				}
@@ -197,7 +197,7 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 					}
 				}
 
-			case "error":
+			case errorType:
 				if msg.Data == "" {
 					continue
 				}
@@ -206,7 +206,7 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 					return
 				}
 
-			case "done":
+			case doneType:
 				return
 			}
 		}

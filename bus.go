@@ -14,8 +14,13 @@ import (
 )
 
 var (
+	// these variables are set during build time
 	Version   = "v0.3.13"
 	GitCommit = ""
+	// the following variables are used in the project
+	msgType   = "msg"
+	errorType = "error"
+	doneType  = "done"
 )
 
 //
