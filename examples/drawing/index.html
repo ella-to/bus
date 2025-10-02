@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Canvas Drawing App</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Oxygen, Ubuntu, Cantarell, sans-serif;
+        overflow: hidden;
+        background: #f5f5f5;
+      }
+
+      #toolbar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: #ffffff;
+        border-bottom: 1px solid #e0e0e0;
+        padding: 16px 24px;
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        z-index: 10;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      }
+
+      .color-palette {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .color-btn {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        border: 3px solid transparent;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+      }
+
+      .color-btn:hover {
+        transform: scale(1.1);
+      }
+
+      .color-btn.active {
+        border-color: #333;
+        box-shadow: 0 0 0 2px #fff, 0 0 0 4px #333;
+      }
+
+      .separator {
+        width: 1px;
+        height: 40px;
+        background: #e0e0e0;
+      }
+
+      .thickness-control {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .thickness-label {
+        font-size: 18px;
+        font-weight: 500;
+        color: #333;
+        min-width: 50px;
+      }
+
+      #thicknessSlider {
+        width: 120px;
+        height: 6px;
+        -webkit-appearance: none;
+        appearance: none;
+        background: #e0e0e0;
+        border-radius: 3px;
+        outline: none;
+        cursor: pointer;
+      }
+
+      #thicknessSlider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 20px;
+        height: 20px;
+        background: #333;
+        border-radius: 50%;
+        cursor: pointer;
+      }
+
+      #thicknessSlider::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+        background: #333;
+        border-radius: 50%;
+        cursor: pointer;
+        border: none;
+      }
+
+      .clear-btn {
+        background: #f5f5f5;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 10px 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 16px;
+        color: #333;
+        transition: all 0.2s ease;
+      }
+
+      .clear-btn:hover {
+        background: #e0e0e0;
+      }
+
+      .clear-btn svg {
+        width: 20px;
+        height: 20px;
+      }
+
+      #canvas {
+        position: fixed;
+        top: 80px;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        cursor: crosshair;
+        background: #ffffff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar">
+      <div class="color-palette">
+        <button
+          class="color-btn active"
+          data-color="#000000"
+          style="background: #000000"
+          title="Black"
+        ></button>
+        <button
+          class="color-btn"
+          data-color="#ff3b30"
+          style="background: #ff3b30"
+          title="Red"
+        ></button>
+        <button
+          class="color-btn"
+          data-color="#34c759"
+          style="background: #34c759"
+          title="Green"
+        ></button>
+        <button
+          class="color-btn"
+          data-color="#007aff"
+          style="background: #007aff"
+          title="Blue"
+        ></button>
+        <button
+          class="color-btn"
+          data-color="#ffffff"
+          style="background: #ffffff; border: 2px solid #e0e0e0"
+          title="White"
+        ></button>
+      </div>
+
+      <div class="separator"></div>
+
+      <div class="thickness-control">
+        <span class="thickness-label" id="thicknessLabel">5px</span>
+        <input type="range" id="thicknessSlider" min="1" max="50" value="5" />
+      </div>
+
+      <div class="separator"></div>
+
+      <button class="clear-btn" id="clearBtn">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path
+            d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+          ></path>
+        </svg>
+        Clear
+      </button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+      let roomId = "";
+
+      function getId() {
+        return Math.random().toString(36).substring(2, 10);
+      }
+
+      // Check for room parameter and redirect if not present
+      const urlParams = new URLSearchParams(window.location.search);
+      const room = urlParams.get("room");
+      if (!room) {
+        urlParams.set("room", getId());
+        window.location.href = `${
+          window.location.pathname
+        }?${urlParams.toString()}`;
+      }
+
+      const subject = `drawing.${room}`;
+
+      const id = getId();
+      const sse = new EventSource(
+        `http://localhost:2021/?subject=${subject}&start=oldest`
+      );
+
+      async function putMsg(payload) {
+        return fetch("http://localhost:2021/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ subject, payload }),
+        });
+      }
+
+      sse.addEventListener("msg", (event) => {
+        const msg = JSON.parse(event.data).payload;
+
+        if (msg.id === id) return;
+        switch (msg.type) {
+          case "draw":
+            rawDraw(msg.from, msg.to, msg.color, msg.thickness);
+            break;
+          case "clear":
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            break;
+          default:
+            console.warn("Unknown message type:", msg.type);
+        }
+      });
+
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      const colorBtns = document.querySelectorAll(".color-btn");
+      const thicknessSlider = document.getElementById("thicknessSlider");
+      const thicknessLabel = document.getElementById("thicknessLabel");
+      const clearBtn = document.getElementById("clearBtn");
+
+      let isDrawing = false;
+      let currentColor = "#000000";
+      let currentThickness = 5;
+      let lastX = 0;
+      let lastY = 0;
+
+      // Added throttle function to limit drawing to 30 fps
+      function throttle(func, limit) {
+        let lastCall = 0;
+        return function (...args) {
+          const now = Date.now();
+          if (now - lastCall >= limit) {
+            lastCall = now;
+            func.apply(this, args);
+          }
+        };
+      }
+
+      // Modified resizeCanvas to preserve drawing content
+      function resizeCanvas() {
+        // Save the current canvas content before resizing
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        const tempCtx = tempCanvas.getContext("2d");
+        tempCtx.putImageData(imageData, 0, 0);
+
+        // Resize the canvas
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight - 80; // Account for toolbar height
+
+        // Restore canvas settings
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        // Redraw the saved content
+        ctx.drawImage(tempCanvas, 0, 0);
+      }
+
+      resizeCanvas();
+      window.addEventListener("resize", resizeCanvas);
+
+      // Color selection
+      colorBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          colorBtns.forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          currentColor = btn.dataset.color;
+        });
+      });
+
+      // Thickness control
+      thicknessSlider.addEventListener("input", (e) => {
+        currentThickness = e.target.value;
+        thicknessLabel.textContent = `${currentThickness}px`;
+      });
+
+      // Clear canvas
+      clearBtn.addEventListener("click", () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        putMsg({ id: id, type: "clear" });
+      });
+
+      // Drawing functions
+      function startDrawing(e) {
+        isDrawing = true;
+        const rect = canvas.getBoundingClientRect();
+        lastX = e.clientX - rect.left;
+        lastY = e.clientY - rect.top;
+      }
+
+      function draw(e) {
+        if (!isDrawing) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const currentX = e.clientX - rect.left;
+        const currentY = e.clientY - rect.top;
+
+        const payload = {
+          id: id,
+          type: "draw",
+          from: { x: lastX, y: lastY },
+          to: { x: currentX, y: currentY },
+          color: currentColor,
+          thickness: currentThickness,
+        };
+
+        rawDraw(payload.from, payload.to, payload.color, payload.thickness);
+        putMsg(payload);
+
+        lastX = currentX;
+        lastY = currentY;
+      }
+
+      function rawDraw(from, to, color, thickness) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = thickness;
+
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+      }
+
+      function stopDrawing() {
+        isDrawing = false;
+      }
+
+      // Throttled draw function for 30 fps (33.33ms between frames)
+      const throttledDraw = throttle(draw, 1000 / 30);
+
+      // Mouse events
+      canvas.addEventListener("mousedown", startDrawing);
+      canvas.addEventListener("mousemove", throttledDraw);
+      canvas.addEventListener("mouseup", stopDrawing);
+      canvas.addEventListener("mouseout", stopDrawing);
+
+      // Touch events for mobile support
+      canvas.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent("mousedown", {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+        });
+        canvas.dispatchEvent(mouseEvent);
+      });
+
+      canvas.addEventListener("touchmove", (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent("mousemove", {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+        });
+        canvas.dispatchEvent(mouseEvent);
+      });
+
+      canvas.addEventListener("touchend", (e) => {
+        e.preventDefault();
+        const mouseEvent = new MouseEvent("mouseup", {});
+        canvas.dispatchEvent(mouseEvent);
+      });
+    </script>
+  </body>
+</html>
