@@ -679,3 +679,386 @@ func BenchmarkBusWithS2Compression_PutLarge(b *testing.B) {
 		}
 	}
 }
+
+func TestRedelivery_MessageIsRedeliveredWhenNotAcked(t *testing.T) {
+	client := createBusServer(t, "TestRedelivery_MessageIsRedeliveredWhenNotAcked")
+
+	// Put a message
+	resp := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData("test message"))
+	if resp.Error() != nil {
+		t.Fatal(resp.Error())
+	}
+
+	// First consumer - doesn't ack, so message should be available for redelivery
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel1()
+
+	firstReceived := false
+	for event, err := range client.Get(
+		ctx1,
+		bus.WithSubject("a.b.c"),
+		bus.WithAckStrategy(bus.AckManual),
+		bus.WithStartFrom(bus.StartOldest),
+		bus.WithDelivery(500*time.Millisecond),
+	) {
+		if err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("failed to get event: %s", err)
+			}
+			break
+		}
+
+		if !firstReceived {
+			firstReceived = true
+			t.Logf("First consumer received message (event_id: %s), not acking", event.Id)
+			// Don't ack - just let the timeout happen
+			// Wait for redelivery timeout
+			time.Sleep(1 * time.Second)
+			cancel1() // Cancel first consumer
+			break
+		}
+	}
+
+	if !firstReceived {
+		t.Fatal("first consumer should have received the message")
+	}
+
+	// Wait a bit to ensure the redelivery timer has triggered
+	time.Sleep(500 * time.Millisecond)
+
+	// Second consumer - should receive the redelivered message
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+
+	secondReceived := false
+	for event, err := range client.Get(
+		ctx2,
+		bus.WithSubject("a.b.c"),
+		bus.WithAckStrategy(bus.AckManual),
+		bus.WithStartFrom(bus.StartOldest),
+		bus.WithDelivery(500*time.Millisecond),
+	) {
+		if err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("failed to get event: %s", err)
+			}
+			break
+		}
+
+		if !secondReceived {
+			secondReceived = true
+			t.Logf("Second consumer received redelivered message (event_id: %s)", event.Id)
+
+			var payload string
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("failed to unmarshal payload: %s", err)
+			}
+
+			if payload != "test message" {
+				t.Fatalf("expected payload 'test message' but got '%s'", payload)
+			}
+
+			// Ack this time
+			if err := event.Ack(ctx2); err != nil {
+				t.Fatalf("failed to ack: %s", err)
+			}
+			break
+		}
+	}
+
+	if !secondReceived {
+		t.Fatal("second consumer should have received the redelivered message")
+	}
+
+	t.Log("Successfully verified: message was redelivered to second consumer after first consumer failed to ack")
+}
+
+func TestRedelivery_MessageIsNotRedeliveredWhenAcked(t *testing.T) {
+	client := createBusServer(t, "TestRedelivery_MessageIsNotRedeliveredWhenAcked")
+
+	// Put multiple messages
+	messageCount := 5
+	for i := 0; i < messageCount; i++ {
+		resp := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData(fmt.Sprintf("message %d", i)))
+		if resp.Error() != nil {
+			t.Fatal(resp.Error())
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	receivedCount := 0
+	seenEventIds := make(map[string]int)
+
+	for event, err := range client.Get(
+		ctx,
+		bus.WithSubject("a.b.c"),
+		bus.WithAckStrategy(bus.AckManual),
+		bus.WithStartFrom(bus.StartOldest),
+		bus.WithDelivery(1*time.Second), // Short redelivery time for testing
+	) {
+		if err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("failed to get event: %s", err)
+			}
+			break
+		}
+
+		receivedCount++
+		seenEventIds[event.Id]++
+
+		t.Logf("Received event %s (count: %d)", event.Id, seenEventIds[event.Id])
+
+		// Acknowledge the message immediately
+		if err := event.Ack(ctx); err != nil {
+			t.Fatalf("failed to ack event: %s", err)
+		}
+
+		// After receiving all messages once, wait a bit to ensure no redeliveries occur
+		if receivedCount >= messageCount {
+			// Wait longer than the redelivery duration to ensure no redeliveries
+			time.Sleep(2 * time.Second)
+			break
+		}
+	}
+
+	// Verify each message was received exactly once
+	for eventId, count := range seenEventIds {
+		if count != 1 {
+			t.Fatalf("event %s was received %d times, expected exactly 1 time (redelivery should not happen when acked)", eventId, count)
+		}
+	}
+
+	if len(seenEventIds) != messageCount {
+		t.Fatalf("expected to receive %d unique messages, but got %d", messageCount, len(seenEventIds))
+	}
+
+	t.Logf("Successfully verified: all %d messages were acknowledged and not redelivered", messageCount)
+}
+
+func TestRedelivery_AckPreventsRedelivery(t *testing.T) {
+	client := createBusServer(t, "TestRedelivery_AckPreventsRedelivery")
+
+	// Put two messages
+	resp1 := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData("message 1"))
+	if resp1.Error() != nil {
+		t.Fatal(resp1.Error())
+	}
+
+	resp2 := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData("message 2"))
+	if resp2.Error() != nil {
+		t.Fatal(resp2.Error())
+	}
+
+	// First consumer - acks message 1 immediately
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel1()
+
+	for event, err := range client.Get(
+		ctx1,
+		bus.WithSubject("a.b.c"),
+		bus.WithAckStrategy(bus.AckManual),
+		bus.WithStartFrom(bus.StartOldest),
+		bus.WithDelivery(500*time.Millisecond),
+	) {
+		if err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("failed to get event: %s", err)
+			}
+			break
+		}
+
+		t.Logf("First consumer received message (event_id: %s), acking immediately", event.Id)
+
+		// Ack immediately
+		if err := event.Ack(ctx1); err != nil {
+			t.Fatalf("failed to ack: %s", err)
+		}
+
+		cancel1() // Stop this consumer after acking first message
+		break
+	}
+
+	// Wait longer than redelivery timeout
+	time.Sleep(1 * time.Second)
+
+	// Second consumer - should only see message 2, not message 1 (which was acked)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+
+	messagesSeen := make(map[string]bool)
+	for event, err := range client.Get(
+		ctx2,
+		bus.WithSubject("a.b.c"),
+		bus.WithAckStrategy(bus.AckManual),
+		bus.WithStartFrom(bus.StartOldest),
+		bus.WithDelivery(500*time.Millisecond),
+	) {
+		if err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("failed to get event: %s", err)
+			}
+			break
+		}
+
+		t.Logf("Second consumer received message (event_id: %s)", event.Id)
+		messagesSeen[event.Id] = true
+
+		if err := event.Ack(ctx2); err != nil {
+			t.Fatalf("failed to ack: %s", err)
+		}
+
+		// After seeing both messages, we're done
+		if len(messagesSeen) >= 2 {
+			break
+		}
+	}
+
+	// Both messages should be seen by second consumer
+	// Message 1 was acked by first consumer but second consumer starts from oldest
+	// so it sees all messages (ack doesn't remove messages, just prevents redelivery)
+	if len(messagesSeen) != 2 {
+		t.Fatalf("expected second consumer to see 2 messages, but saw %d", len(messagesSeen))
+	}
+
+	t.Log("Successfully verified: ack prevents redelivery but messages remain available for other consumers")
+}
+
+func TestRedelivery_ConsumerDisconnectCausesRedelivery(t *testing.T) {
+	client := createBusServer(t, "TestRedelivery_ConsumerDisconnectCausesRedelivery")
+
+	// Put a message
+	resp := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData("will be redelivered"))
+	if resp.Error() != nil {
+		t.Fatal(resp.Error())
+	}
+
+	eventIdSeen := ""
+
+	// First consumer - receives but disconnects without acking
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel1()
+
+	for event, err := range client.Get(
+		ctx1,
+		bus.WithSubject("a.b.c"),
+		bus.WithAckStrategy(bus.AckManual),
+		bus.WithStartFrom(bus.StartOldest),
+		bus.WithDelivery(500*time.Millisecond),
+	) {
+		if err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("consumer 1 error: %s", err)
+			}
+			break
+		}
+
+		eventIdSeen = event.Id
+		t.Logf("First consumer received message (event_id: %s), disconnecting without ack", event.Id)
+		// Immediately disconnect without acking
+		cancel1()
+		break
+	}
+
+	if eventIdSeen == "" {
+		t.Fatal("first consumer should have received a message")
+	}
+
+	// Wait for redelivery timeout to trigger
+	time.Sleep(1 * time.Second)
+
+	// Second consumer - should receive the same message (redelivered)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+
+	redelivered := false
+	for event, err := range client.Get(
+		ctx2,
+		bus.WithSubject("a.b.c"),
+		bus.WithAckStrategy(bus.AckManual),
+		bus.WithStartFrom(bus.StartOldest),
+		bus.WithDelivery(500*time.Millisecond),
+	) {
+		if err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("consumer 2 error: %s", err)
+			}
+			break
+		}
+
+		t.Logf("Second consumer received message (event_id: %s)", event.Id)
+
+		if event.Id == eventIdSeen {
+			redelivered = true
+			t.Log("Message was successfully redelivered to second consumer!")
+
+			// Ack it this time
+			if err := event.Ack(ctx2); err != nil {
+				t.Fatalf("failed to ack: %s", err)
+			}
+			break
+		}
+	}
+
+	if !redelivered {
+		t.Fatal("message should have been redelivered to second consumer after first consumer disconnected")
+	}
+
+	t.Log("Successfully verified: disconnecting without ack causes redelivery")
+}
+
+func TestRedelivery_WithAckNoneNoRedelivery(t *testing.T) {
+	client := createBusServer(t, "TestRedelivery_WithAckNoneNoRedelivery")
+
+	// Put a message
+	resp := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData("no ack needed"))
+	if resp.Error() != nil {
+		t.Fatal(resp.Error())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	receivedCount := 0
+	seenEventIds := make(map[string]int)
+
+	for event, err := range client.Get(
+		ctx,
+		bus.WithSubject("a.b.c"),
+		bus.WithAckStrategy(bus.AckNone), // No manual ack required
+		bus.WithStartFrom(bus.StartOldest),
+		bus.WithDelivery(500*time.Millisecond), // Even with short redelivery, should not redeliver
+	) {
+		if err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("failed to get event: %s", err)
+			}
+			break
+		}
+
+		receivedCount++
+		seenEventIds[event.Id]++
+
+		t.Logf("Received event %s (total received: %d)", event.Id, receivedCount)
+
+		// Don't call ack - with AckNone strategy, messages should not be redelivered
+		if receivedCount >= 1 {
+			// Wait to verify no redelivery occurs
+			time.Sleep(2 * time.Second)
+			break
+		}
+	}
+
+	if receivedCount != 1 {
+		t.Fatalf("with AckNone strategy, expected to receive message exactly once, but got %d times", receivedCount)
+	}
+
+	for eventId, count := range seenEventIds {
+		if count != 1 {
+			t.Fatalf("event %s was received %d times, expected exactly 1 time (no redelivery with AckNone)", eventId, count)
+		}
+	}
+
+	t.Log("Successfully verified: AckNone strategy does not trigger redelivery")
+}

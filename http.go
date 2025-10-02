@@ -194,46 +194,49 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-	REDLIVERY:
-		// NOTE: we are creating a new SSE msg since msg has some
-		// io.Read and io.Write internal variables which are essential to
-		// io.Copy
-		msg, err := newSseEvent(&event)
-		if err != nil {
-			slog.Warn("failed to create a sse message from event", "error", err, "event_id", event.Id, "consumer_id", id)
-			pusher.Push(newSseError(err))
-			continue
-		}
+		for {
+			// NOTE: we are creating a new SSE msg since msg has some
+			// io.Read and io.Write internal variables which are essential to
+			// io.Copy
+			msg, err := newSseEvent(&event)
+			if err != nil {
+				slog.Warn("failed to create a sse message from event", "error", err, "event_id", event.Id, "consumer_id", id)
+				pusher.Push(newSseError(err))
+				break
+			}
 
-		err = pusher.Push(msg)
-		if err != nil {
-			slog.Warn("failed to push sse message to consumer", "error", err, "event_id", event.Id, "consumer_id", id)
-			h.runner.Submit(ctx, func(ctx context.Context) error {
-				delete(h.waitingAckMap, key)
-				return nil
-			})
-			return
-		}
-
-		if ack == AckManual {
-			select {
-			case <-ctx.Done():
+			err = pusher.Push(msg)
+			if err != nil {
+				slog.Warn("failed to push sse message to consumer", "error", err, "event_id", event.Id, "consumer_id", id)
 				h.runner.Submit(ctx, func(ctx context.Context) error {
 					delete(h.waitingAckMap, key)
 					return nil
 				})
 				return
-			case <-ch:
-				// ack received, the ch singal will be deleted by Ack function
-				slog.Debug("received acked", "consumer_id", id, "event_id", event.Id)
-			case <-time.After(redelivery):
-				slog.Warn("redelivery", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId)
-				h.runner.Submit(ctx, func(ctx context.Context) error {
-					delete(h.waitingAckMap, key)
-					return nil
-				}).Await(ctx)
-				goto REDLIVERY
 			}
+
+			if ack == AckManual {
+				select {
+				case <-ctx.Done():
+					h.runner.Submit(ctx, func(ctx context.Context) error {
+						delete(h.waitingAckMap, key)
+						return nil
+					})
+					return
+				case <-ch:
+					// ack received, the ch signal will be deleted by Ack function
+					slog.Debug("received acked", "consumer_id", id, "event_id", event.Id)
+					break
+				case <-time.After(redelivery):
+					slog.Warn("redelivery", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId)
+					h.runner.Submit(ctx, func(ctx context.Context) error {
+						delete(h.waitingAckMap, key)
+						return nil
+					}).Await(ctx)
+					continue
+				}
+			}
+			break
 		}
 	}
 }
