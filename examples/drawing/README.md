@@ -83,10 +83,10 @@ Now both browser windows are connected to the same drawing room! Any drawing act
 The application uses Bus as a message broker to synchronize drawing events across multiple clients:
 
 ```
-┌──────────┐         ┌──────────┐         ┌──────────┐
-│ Client 1 │◄───────►│   Bus    │◄───────►│ Client 2 │
+┌──────────┐          ┌──────────┐          ┌──────────┐
+│ Client 1 │◄────────►│   Bus    │◄────────►│ Client 2 │
 │ Browser  │  Events  │  Server  │  Events  │ Browser  │
-└──────────┘         └──────────┘         └──────────┘
+└──────────┘          └──────────┘          └──────────┘
 ```
 
 ### Event Flow
