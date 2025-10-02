@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Canvas Drawing App</title>
+    <title>Multiplayer Canvas Drawing App</title>
+
     <style>
       * {
         margin: 0;
@@ -143,6 +144,7 @@
   </head>
   <body>
     <div id="toolbar">
+      <!-- Color Selection Palette -->
       <div class="color-palette">
         <button
           class="color-btn active"
@@ -178,6 +180,7 @@
 
       <div class="separator"></div>
 
+      <!-- Brush Thickness Control -->
       <div class="thickness-control">
         <span class="thickness-label" id="thicknessLabel">5px</span>
         <input type="range" id="thicknessSlider" min="1" max="50" value="5" />
@@ -185,6 +188,7 @@
 
       <div class="separator"></div>
 
+      <!-- Clear Canvas Button -->
       <button class="clear-btn" id="clearBtn">
         <svg
           viewBox="0 0 24 24"
@@ -206,69 +210,26 @@
     <canvas id="canvas"></canvas>
 
     <script>
-      let roomId = "";
+      // ===================================================
+      // SECTION 1: Utility Functions
+      // ===================================================
+      const host = "http://localhost:2021/";
 
+      /**
+       * Generate a random unique identifier
+       * @returns {string} Random 8-character ID
+       */
       function getId() {
         return Math.random().toString(36).substring(2, 10);
       }
 
-      // Check for room parameter and redirect if not present
-      const urlParams = new URLSearchParams(window.location.search);
-      const room = urlParams.get("room");
-      if (!room) {
-        urlParams.set("room", getId());
-        window.location.href = `${
-          window.location.pathname
-        }?${urlParams.toString()}`;
-      }
-
-      const subject = `drawing.${room}`;
-
-      const id = getId();
-      const sse = new EventSource(
-        `http://localhost:2021/?subject=${subject}&start=oldest`
-      );
-
-      async function putMsg(payload) {
-        return fetch("http://localhost:2021/", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ subject, payload }),
-        });
-      }
-
-      sse.addEventListener("msg", (event) => {
-        const msg = JSON.parse(event.data).payload;
-
-        if (msg.id === id) return;
-        switch (msg.type) {
-          case "draw":
-            rawDraw(msg.from, msg.to, msg.color, msg.thickness);
-            break;
-          case "clear":
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            break;
-          default:
-            console.warn("Unknown message type:", msg.type);
-        }
-      });
-
-      const canvas = document.getElementById("canvas");
-      const ctx = canvas.getContext("2d");
-      const colorBtns = document.querySelectorAll(".color-btn");
-      const thicknessSlider = document.getElementById("thicknessSlider");
-      const thicknessLabel = document.getElementById("thicknessLabel");
-      const clearBtn = document.getElementById("clearBtn");
-
-      let isDrawing = false;
-      let currentColor = "#000000";
-      let currentThickness = 5;
-      let lastX = 0;
-      let lastY = 0;
-
-      // Added throttle function to limit drawing to 30 fps
+      /**
+       * Throttle function to limit execution rate
+       * Useful for performance optimization (e.g., limiting draw events to 30fps)
+       * @param {Function} func - Function to throttle
+       * @param {number} limit - Minimum milliseconds between calls
+       * @returns {Function} Throttled function
+       */
       function throttle(func, limit) {
         let lastCall = 0;
         return function (...args) {
@@ -280,7 +241,98 @@
         };
       }
 
-      // Modified resizeCanvas to preserve drawing content
+      // ===================================================
+      // SECTION 2: Room Setup & Bus Connection
+      // ===================================================
+
+      // Check for room parameter and redirect if not present
+      // This ensures each drawing session has a unique room ID
+      const urlParams = new URLSearchParams(window.location.search);
+      const room = urlParams.get("room");
+      if (!room) {
+        urlParams.set("room", getId());
+        window.location.href = `${
+          window.location.pathname
+        }?${urlParams.toString()}`;
+      }
+
+      // Define the subject for this drawing room
+      // Format: "drawing.{roomId}" - namespaced under "drawing"
+      const subject = `drawing.${room}`;
+
+      // Generate unique ID for this client to avoid drawing own messages
+      const id = getId();
+
+      // Connect to Bus server via Server-Sent Events (SSE)
+      // - subject: Subscribe to this specific room's drawing events
+      // - start=oldest: Replay all previous drawing events from the beginning
+      const sse = new EventSource(`${host}?subject=${subject}&start=oldest`);
+
+      /**
+       * Publish a message to the Bus server
+       * @param {Object} payload - Message payload to send
+       * @returns {Promise} Fetch promise
+       */
+      async function putMsg(payload) {
+        return fetch(host, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ subject, payload }),
+        });
+      }
+
+      // ===================================================
+      // SECTION 3: Message Event Handler
+      // ===================================================
+
+      // Listen for incoming drawing events from other clients
+      sse.addEventListener("msg", (event) => {
+        const msg = JSON.parse(event.data).payload;
+
+        // Ignore messages sent by this client (avoid drawing twice)
+        if (msg.id === id) return;
+
+        // Handle different message types
+        switch (msg.type) {
+          case "draw":
+            // Draw line segment from another user
+            rawDraw(msg.from, msg.to, msg.color, msg.thickness);
+            break;
+          case "clear":
+            // Clear canvas when another user clears
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            break;
+          default:
+            console.warn("Unknown message type:", msg.type);
+        }
+      });
+
+      // ===================================================
+      // SECTION 4: Canvas Setup
+      // ===================================================
+
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      // UI elements
+      const colorBtns = document.querySelectorAll(".color-btn");
+      const thicknessSlider = document.getElementById("thicknessSlider");
+      const thicknessLabel = document.getElementById("thicknessLabel");
+      const clearBtn = document.getElementById("clearBtn");
+
+      // Drawing state variables
+      let isDrawing = false;
+      let currentColor = "#000000";
+      let currentThickness = 5;
+      let lastX = 0;
+      let lastY = 0;
+
+      /**
+       * Resize canvas to fill available space while preserving content
+       * This ensures drawings aren't lost when window is resized
+       */
       function resizeCanvas() {
         // Save the current canvas content before resizing
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -305,6 +357,10 @@
       resizeCanvas();
       window.addEventListener("resize", resizeCanvas);
 
+      // ===================================================
+      // SECTION 5: Toolbar Event Handlers
+      // ===================================================
+
       // Color selection
       colorBtns.forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -320,13 +376,20 @@
         thicknessLabel.textContent = `${currentThickness}px`;
       });
 
-      // Clear canvas
+      // Clear canvas button - clears local canvas and broadcasts to all clients
       clearBtn.addEventListener("click", () => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         putMsg({ id: id, type: "clear" });
       });
 
-      // Drawing functions
+      // ===================================================
+      // SECTION 6: Drawing Functions
+      // ===================================================
+
+      /**
+       * Start drawing - called on mousedown
+       * @param {MouseEvent} e - Mouse event
+       */
       function startDrawing(e) {
         isDrawing = true;
         const rect = canvas.getBoundingClientRect();
@@ -334,6 +397,11 @@
         lastY = e.clientY - rect.top;
       }
 
+      /**
+       * Draw function - called on mousemove while drawing
+       * Draws locally and broadcasts to other clients via Bus
+       * @param {MouseEvent} e - Mouse event
+       */
       function draw(e) {
         if (!isDrawing) return;
 
@@ -341,6 +409,7 @@
         const currentX = e.clientX - rect.left;
         const currentY = e.clientY - rect.top;
 
+        // Create message payload for this draw action
         const payload = {
           id: id,
           type: "draw",
@@ -350,13 +419,25 @@
           thickness: currentThickness,
         };
 
+        // Draw locally
         rawDraw(payload.from, payload.to, payload.color, payload.thickness);
+
+        // Broadcast to other clients via Bus
         putMsg(payload);
 
+        // Update last position for next segment
         lastX = currentX;
         lastY = currentY;
       }
 
+      /**
+       * Raw drawing function - draws a line segment on canvas
+       * Used for both local drawing and replaying remote events
+       * @param {Object} from - Starting point {x, y}
+       * @param {Object} to - Ending point {x, y}
+       * @param {string} color - Stroke color
+       * @param {number} thickness - Line thickness
+       */
       function rawDraw(from, to, color, thickness) {
         ctx.strokeStyle = color;
         ctx.lineWidth = thickness;
@@ -367,20 +448,31 @@
         ctx.stroke();
       }
 
+      /**
+       * Stop drawing - called on mouseup or mouseout
+       */
       function stopDrawing() {
         isDrawing = false;
       }
 
-      // Throttled draw function for 30 fps (33.33ms between frames)
+      // ===================================================
+      // SECTION 7: Mouse Event Listeners
+      // ===================================================
+
+      // Throttle draw function to 30 fps for better performance
+      // This reduces the number of messages sent to the server
       const throttledDraw = throttle(draw, 1000 / 30);
 
-      // Mouse events
       canvas.addEventListener("mousedown", startDrawing);
       canvas.addEventListener("mousemove", throttledDraw);
       canvas.addEventListener("mouseup", stopDrawing);
       canvas.addEventListener("mouseout", stopDrawing);
 
-      // Touch events for mobile support
+      // ===================================================
+      // SECTION 8: Touch Support for Mobile Devices
+      // ===================================================
+
+      // Touch start - simulate mousedown
       canvas.addEventListener("touchstart", (e) => {
         e.preventDefault();
         const touch = e.touches[0];
@@ -391,6 +483,7 @@
         canvas.dispatchEvent(mouseEvent);
       });
 
+      // Touch move - simulate mousemove
       canvas.addEventListener("touchmove", (e) => {
         e.preventDefault();
         const touch = e.touches[0];
@@ -401,6 +494,7 @@
         canvas.dispatchEvent(mouseEvent);
       });
 
+      // Touch end - simulate mouseup
       canvas.addEventListener("touchend", (e) => {
         e.preventDefault();
         const mouseEvent = new MouseEvent("mouseup", {});
