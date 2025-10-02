@@ -114,15 +114,6 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	slog.Info("new consumer", "id", id, "subject", subject, "start", start, "ack", ack, "redelivery", redelivery)
 	defer slog.Info("consumer closed", "id", id)
 
-	w.Header().Set(HeaderConsumerId, id)
-
-	pusher, err := sse.NewPusher(w, DefaultSsePingTimeout)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer pusher.Close()
-
 	var startPos int64
 	switch start {
 	case StartOldest:
@@ -143,6 +134,15 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 	stream := h.eventsLog.Stream(ctx, subject[:namespaceIdx], startPos)
 	defer stream.Done()
+
+	w.Header().Set(HeaderConsumerId, id)
+
+	pusher, err := sse.NewPusher(w, DefaultSsePingTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer pusher.Close()
 
 	for {
 		r, _, err := stream.Next(ctx)
@@ -339,11 +339,36 @@ func NewHandler(eventLogs *immuta.Storage, runner task.Runner) *Handler {
 		waitingAckMap: make(map[string]chan struct{}),
 	}
 
-	h.mux.HandleFunc("POST /", h.Put)
-	h.mux.HandleFunc("GET /", h.Get)
-	h.mux.HandleFunc("PUT /", h.Ack)
+	// Wrap handlers with CORS middleware
+	h.mux.HandleFunc("POST /", corsMiddleware(h.Put))
+	h.mux.HandleFunc("GET /", corsMiddleware(h.Get))
+	h.mux.HandleFunc("PUT /", corsMiddleware(h.Ack))
+	h.mux.HandleFunc("OPTIONS /", corsMiddleware(handleOptions))
 
 	return h
+}
+
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	allowHeaders := "Content-Type, " + HeaderEventId + ", " + HeaderEventCreatedAt + ", " + HeaderEventIndex + ", " + HeaderConsumerId
+	exposeHeaders := HeaderEventId + ", " + HeaderEventCreatedAt + ", " + HeaderEventIndex + ", " + HeaderConsumerId
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", allowHeaders)
+		w.Header().Set("Access-Control-Expose-Headers", exposeHeaders)
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+func handleOptions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func NewServer(addr string, logsDirPath string, namespaces []string, compressor immuta.Compressor) (*http.Server, error) {
