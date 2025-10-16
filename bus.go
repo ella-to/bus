@@ -903,40 +903,109 @@ func WithRequestReply() PutOpt {
 
 // Payload
 
-type dataOpt struct{ value any }
+// dataOpt represents an option that sets payload data for events and acknowledgments.
+type dataOpt struct {
+	value any
+}
 
+// WithData creates a data option with the provided value.
+// Passing nil will result in an error when the option is applied.
+func WithData(data any) *dataOpt {
+	return &dataOpt{value: data}
+}
+
+// configurePut sets the event payload based on the data value's type.
 func (d *dataOpt) configurePut(p *putOpt) error {
 	if p.event.Payload != nil {
-		return errors.New("event's payload already set")
+		return errors.New("event payload already set")
 	}
 
-	// how to encode error value ?? {error: "error message"} or simple string?????
+	if d.value == nil {
+		return errors.New("data value cannot be nil")
+	}
 
-	data, err := json.Marshal(d.value)
+	payload, err := d.marshalPayload()
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	p.event.Payload = json.RawMessage(data)
+	p.event.Payload = payload
 	return nil
 }
 
+// configureAck sets the acknowledgment payload.
 func (d *dataOpt) configureAck(a *ackOpt) error {
 	if a.payload != nil {
 		return errors.New("payload already set")
 	}
 
-	data, err := json.Marshal(d.value)
-	if err != nil {
-		return err
+	if d.value == nil {
+		return errors.New("data value cannot be nil")
 	}
 
-	a.payload = json.RawMessage(data)
+	payload, err := json.Marshal(d.value)
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+
+	a.payload = json.RawMessage(payload)
 	return nil
 }
 
-func WithData(data any) *dataOpt {
-	return &dataOpt{data}
+// marshalPayload converts the data value to json.RawMessage based on its type.
+func (d *dataOpt) marshalPayload() (json.RawMessage, error) {
+	switch v := d.value.(type) {
+	case json.RawMessage:
+		return v, nil
+
+	case string:
+		return d.marshalString(v)
+
+	case []byte:
+		return d.marshalBytes(v)
+
+	case error:
+		return d.marshalError(v)
+
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64, bool:
+		return d.marshalPrimitive(v)
+
+	case fmt.Stringer:
+		return json.Marshal(v)
+
+	default:
+		return json.Marshal(d.value)
+	}
+}
+
+// marshalString handles string values.
+// If the string is valid JSON, it's used as-is, otherwise it's encoded as a JSON string.
+func (d *dataOpt) marshalString(s string) (json.RawMessage, error) {
+	if json.Valid([]byte(s)) {
+		return json.RawMessage(s), nil
+	}
+	return json.Marshal(s)
+}
+
+// marshalBytes handles byte slice values.
+// If the bytes represent valid JSON, they're used as-is, otherwise converted to a JSON string.
+func (d *dataOpt) marshalBytes(b []byte) (json.RawMessage, error) {
+	if json.Valid(b) {
+		return json.RawMessage(b), nil
+	}
+	return json.Marshal(string(b))
+}
+
+// marshalError converts an error to a JSON object with an "error" field.
+func (d *dataOpt) marshalError(err error) (json.RawMessage, error) {
+	return json.Marshal(map[string]string{"error": err.Error()})
+}
+
+// marshalPrimitive handles numeric and boolean primitive types.
+func (d *dataOpt) marshalPrimitive(v any) (json.RawMessage, error) {
+	return fmt.Appendf(nil, "%v", v), nil
 }
 
 //
