@@ -15,7 +15,7 @@ import (
 
 var (
 	// these variables are set during build time
-	Version   = "v0.3.17"
+	Version   = "v0.3.18"
 	GitCommit = ""
 	// the following variables are used in the project
 	msgType   = "msg"
