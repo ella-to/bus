@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"ella.to/bus/internal/compress"
 	"ella.to/immuta"
 	"github.com/urfave/cli/v2"
 
@@ -32,10 +33,20 @@ func CopyCommand() *cli.Command {
 				Usage:    "source namespace to copy events from",
 				Required: true,
 			},
+			&cli.BoolFlag{
+				Name:  "src-compressed",
+				Usage: "indicates if the source namespace is compressed",
+				Value: true,
+			},
 			&cli.StringFlag{
 				Name:     "dst",
 				Usage:    "destination namespace to copy events to",
 				Required: true,
+			},
+			&cli.BoolFlag{
+				Name:  "dst-compressed",
+				Usage: "indicates if the destination namespace is compressed",
+				Value: true,
 			},
 			&cli.StringFlag{
 				Name:  "skip-ids",
@@ -45,27 +56,41 @@ func CopyCommand() *cli.Command {
 		Action: func(c *cli.Context) error {
 			dir := c.String("dir")
 			src := c.String("src")
+			isSrcCompressed := c.Bool("src-compressed")
 			dst := c.String("dst")
+			isDstCompressed := c.Bool("dst-compressed")
 			skipIDs := strings.Split(c.String("skip-ids"), ",")
 
-			immutaSrc, err := immuta.New(
+			srcOpts := []immuta.OptionFunc{
 				immuta.WithLogsDirPath(dir),
 				immuta.WithNamespaces(src),
 				immuta.WithFastWrite(true),
 				immuta.WithReaderCount(2),
-			)
+			}
+
+			if isSrcCompressed {
+				srcOpts = append(srcOpts, immuta.WithCompression(compress.NewS2Compressor()))
+			}
+
+			immutaSrc, err := immuta.New(srcOpts...)
 			if err != nil {
 				log.Fatal(err)
 			}
 
 			defer immutaSrc.Close()
 
-			immutaDst, err := immuta.New(
+			dstOpts := []immuta.OptionFunc{
 				immuta.WithLogsDirPath(dir),
 				immuta.WithNamespaces(dst),
 				immuta.WithFastWrite(true),
 				immuta.WithReaderCount(2),
-			)
+			}
+
+			if isDstCompressed {
+				dstOpts = append(dstOpts, immuta.WithCompression(compress.NewS2Compressor()))
+			}
+
+			immutaDst, err := immuta.New(dstOpts...)
 			if err != nil {
 				return err
 			}
