@@ -62,8 +62,13 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	event.Id = newEventId()
-	event.CreatedAt = time.Now()
+	if event.Id == "" {
+		event.Id = newEventId()
+	}
+
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now()
+	}
 
 	var eventIndex int64
 

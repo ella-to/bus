@@ -479,9 +479,10 @@ func (e *Event) Write(b []byte) (int, error) {
 							break
 						}
 					} else {
-						if b[pos] == '\\' {
+						switch b[pos] {
+						case '\\':
 							pos++
-						} else if b[pos] == '"' {
+						case '"':
 							inString = false
 						}
 					}
@@ -576,7 +577,8 @@ func parseString(b []byte) (string, int, error) {
 	pos := 1
 	var result bytes.Buffer
 	for pos < len(b) {
-		if b[pos] == '\\' {
+		switch b[pos] {
+		case '\\':
 			if pos+1 >= len(b) {
 				return "", 0, errors.New("incomplete escape sequence")
 			}
@@ -597,9 +599,9 @@ func parseString(b []byte) (string, int, error) {
 			default:
 				return "", 0, errors.New("invalid escape sequence")
 			}
-		} else if b[pos] == '"' {
+		case '"':
 			return result.String(), pos + 1, nil
-		} else {
+		default:
 			result.WriteByte(b[pos])
 		}
 		pos++
@@ -1029,4 +1031,56 @@ func (o *traceIdOpt) configurePut(opt *putOpt) error {
 
 func WithTraceId(traceId string) *traceIdOpt {
 	return &traceIdOpt{traceId}
+}
+
+//
+// Id
+//
+
+type idOpt struct {
+	value string
+}
+
+var _ PutOpt = (*idOpt)(nil)
+
+func (o *idOpt) configurePut(opt *putOpt) error {
+	if opt.event.Id != "" {
+		return fmt.Errorf("id option already set to %s", opt.event.Id)
+	}
+
+	opt.event.Id = o.value
+	return nil
+}
+
+// WithId sets the identifier of the event
+// Note: setting the id manually may lead to conflicts if the same id is used multiple times
+// so it should be used with caution, if you are not sure about it, do not use it.
+func WithId(id string) *idOpt {
+	return &idOpt{id}
+}
+
+//
+// CreatedAt
+//
+
+type createdAtOpt struct {
+	value time.Time
+}
+
+var _ PutOpt = (*createdAtOpt)(nil)
+
+func (o *createdAtOpt) configurePut(opt *putOpt) error {
+	if !opt.event.CreatedAt.IsZero() {
+		return fmt.Errorf("created at option already set to %s", opt.event.CreatedAt)
+	}
+
+	opt.event.CreatedAt = o.value
+	return nil
+}
+
+// WithCreatedAt sets the creation time of the event
+// Note: setting the created at manually may lead to confusion if the time is in the past or future
+// so it should be used with caution, if you are not sure about it, do not use it.
+func WithCreatedAt(createdAt time.Time) *createdAtOpt {
+	return &createdAtOpt{createdAt}
 }

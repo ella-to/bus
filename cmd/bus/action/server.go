@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -104,7 +105,7 @@ func ServerCommand() *cli.Command {
 				fmt.Printf(logo, bus.Version, bus.GitCommit)
 				slog.Info("server started", "address", addr, "namespaces", namespaces, "events_log_file", path, "compression", compression, "log_level", logLevel.String())
 
-				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				if listenErr := server.ListenAndServe(); listenErr != nil && !errors.Is(err, http.ErrServerClosed) {
 					slog.Error("failed to start server", "error", err)
 				}
 			}()

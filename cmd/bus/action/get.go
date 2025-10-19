@@ -34,7 +34,7 @@ func GetCommand() *cli.Command {
 				Usage: "start consuming from, oldest, newest or event id",
 				Action: func(c *cli.Context, value string) error {
 					if value != "newest" && value != "oldest" && !strings.HasPrefix(value, "e_") {
-						return cli.Exit("invali position, it should be one of newest, oldest or and event id", 1)
+						return cli.Exit("invalid position, it should be one of newest, oldest or and event id", 1)
 					}
 					return nil
 				},
