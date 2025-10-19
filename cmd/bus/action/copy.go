@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"ella.to/bus/internal/compress"
+	"ella.to/bus/compress"
 	"ella.to/immuta"
 	"github.com/urfave/cli/v2"
 

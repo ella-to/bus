@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"ella.to/bus"
-	"ella.to/bus/internal/compress"
+	"ella.to/bus/compress"
 	"ella.to/immuta"
 	"ella.to/task"
 )

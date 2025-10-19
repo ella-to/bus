@@ -16,7 +16,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"ella.to/bus"
-	"ella.to/bus/internal/compress"
+	"ella.to/bus/compress"
 	"ella.to/immuta"
 )
 
