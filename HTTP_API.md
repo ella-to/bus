@@ -162,7 +162,7 @@ Only applicable when `ack=manual`. If a message is not acknowledged within this 
 curl "http://localhost:2021/?subject=drawing.*&start=oldest"
 
 # Subscribe to new events only with manual acknowledgment
-curl "http://localhost:2021/?subject=chat.room1.*&start=newest&ack=manual&redelivery=10s"
+curl "http://localhost:2021/?subject=chat.room1.*&start=newest&ack=manual&redelivery=10s&redelivery_count=3"
 
 # Resume from a specific event
 curl "http://localhost:2021/?subject=logs.**&start=e_xyz789"

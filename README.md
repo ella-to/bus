@@ -28,13 +28,13 @@
 to install sdk
 
 ```shell
-go get ella.to/bus@v0.3.21
+go get ella.to/bus@v0.4.0
 ```
 
 to install a cli, run the following
 
 ```shell
-go install ella.to/bus/cmd/bus@v0.3.21
+go install ella.to/bus/cmd/bus@v0.4.0
 ```
 
 and to run the server using docker, simply use the provided docker-compose and run it
