@@ -271,9 +271,9 @@ func BenchmarkEncodeEventUsingRead(b *testing.B) {
 
 	var buffer bytes.Buffer
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		buffer.Reset()
-		io.Copy(&buffer, &event)
+		_, _ = io.Copy(&buffer, &event)
 	}
 }
 
@@ -292,9 +292,9 @@ func BenchmarkEncodeEventUsingJSON(b *testing.B) {
 
 	var buffer bytes.Buffer
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		buffer.Reset()
-		json.NewEncoder(&buffer).Encode(&event)
+		_ = json.NewEncoder(&buffer).Encode(&event)
 	}
 }
 
@@ -305,8 +305,8 @@ func BenchmarkDecodeEventUsingWrite(b *testing.B) {
 
 	var event bus.Event
 
-	for i := 0; i < b.N; i++ {
-		io.Copy(&event, bytes.NewReader(input))
+	for b.Loop() {
+		_, _ = io.Copy(&event, bytes.NewReader(input))
 	}
 }
 
@@ -317,8 +317,8 @@ func BenchmarkDecodeEventUsingJSON(b *testing.B) {
 
 	var event bus.Event
 
-	for i := 0; i < b.N; i++ {
-		json.NewDecoder(bytes.NewReader(input)).Decode(&event)
+	for b.Loop() {
+		_ = json.NewDecoder(bytes.NewReader(input)).Decode(&event)
 	}
 }
 
@@ -699,7 +699,7 @@ func TestRedelivery_MessageIsRedeliveredWhenNotAcked(t *testing.T) {
 		bus.WithSubject("a.b.c"),
 		bus.WithAckStrategy(bus.AckManual),
 		bus.WithStartFrom(bus.StartOldest),
-		bus.WithDelivery(500*time.Millisecond),
+		bus.WithDelivery(500*time.Millisecond, 1),
 	) {
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) {
@@ -736,7 +736,7 @@ func TestRedelivery_MessageIsRedeliveredWhenNotAcked(t *testing.T) {
 		bus.WithSubject("a.b.c"),
 		bus.WithAckStrategy(bus.AckManual),
 		bus.WithStartFrom(bus.StartOldest),
-		bus.WithDelivery(500*time.Millisecond),
+		bus.WithDelivery(500*time.Millisecond, 1),
 	) {
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) {
@@ -796,7 +796,7 @@ func TestRedelivery_MessageIsNotRedeliveredWhenAcked(t *testing.T) {
 		bus.WithSubject("a.b.c"),
 		bus.WithAckStrategy(bus.AckManual),
 		bus.WithStartFrom(bus.StartOldest),
-		bus.WithDelivery(1*time.Second), // Short redelivery time for testing
+		bus.WithDelivery(1*time.Second, 1), // Short redelivery time for testing
 	) {
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) {
@@ -860,7 +860,7 @@ func TestRedelivery_AckPreventsRedelivery(t *testing.T) {
 		bus.WithSubject("a.b.c"),
 		bus.WithAckStrategy(bus.AckManual),
 		bus.WithStartFrom(bus.StartOldest),
-		bus.WithDelivery(500*time.Millisecond),
+		bus.WithDelivery(500*time.Millisecond, 1),
 	) {
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) {
@@ -893,7 +893,7 @@ func TestRedelivery_AckPreventsRedelivery(t *testing.T) {
 		bus.WithSubject("a.b.c"),
 		bus.WithAckStrategy(bus.AckManual),
 		bus.WithStartFrom(bus.StartOldest),
-		bus.WithDelivery(500*time.Millisecond),
+		bus.WithDelivery(500*time.Millisecond, 1),
 	) {
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) {
@@ -945,7 +945,7 @@ func TestRedelivery_ConsumerDisconnectCausesRedelivery(t *testing.T) {
 		bus.WithSubject("a.b.c"),
 		bus.WithAckStrategy(bus.AckManual),
 		bus.WithStartFrom(bus.StartOldest),
-		bus.WithDelivery(500*time.Millisecond),
+		bus.WithDelivery(500*time.Millisecond, 1),
 	) {
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) {
@@ -978,7 +978,7 @@ func TestRedelivery_ConsumerDisconnectCausesRedelivery(t *testing.T) {
 		bus.WithSubject("a.b.c"),
 		bus.WithAckStrategy(bus.AckManual),
 		bus.WithStartFrom(bus.StartOldest),
-		bus.WithDelivery(500*time.Millisecond),
+		bus.WithDelivery(500*time.Millisecond, 1),
 	) {
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) {
@@ -1028,7 +1028,7 @@ func TestRedelivery_WithAckNoneNoRedelivery(t *testing.T) {
 		bus.WithSubject("a.b.c"),
 		bus.WithAckStrategy(bus.AckNone), // No manual ack required
 		bus.WithStartFrom(bus.StartOldest),
-		bus.WithDelivery(500*time.Millisecond), // Even with short redelivery, should not redeliver
+		bus.WithDelivery(500*time.Millisecond, 1), // Even with short redelivery, should not redeliver
 	) {
 		if err != nil {
 			if !errors.Is(err, context.DeadlineExceeded) {
@@ -1061,4 +1061,66 @@ func TestRedelivery_WithAckNoneNoRedelivery(t *testing.T) {
 	}
 
 	t.Log("Successfully verified: AckNone strategy does not trigger redelivery")
+}
+
+func TestRedeliveryCountDrop(t *testing.T) {
+	ctx := t.Context()
+
+	client := createBusServer(t, "TestRedeliveryCountDrop")
+
+	// Put a message
+	err := client.Put(
+		ctx,
+		bus.WithSubject("a.b.c"),
+		bus.WithData("bad message"),
+	).Error()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = client.Put(
+		ctx,
+		bus.WithSubject("a.b.c"),
+		bus.WithData("good message"),
+	).Error()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Consumer - tries to get and redeliver the message
+
+	redeliveryAttempts := 0
+	maxRedeliveries := 3
+
+	for event, err := range client.Get(
+		ctx,
+		bus.WithSubject("a.b.c"),
+		bus.WithAckStrategy(bus.AckManual),
+		bus.WithStartFrom(bus.StartOldest),
+		bus.WithDelivery(500*time.Millisecond, maxRedeliveries),
+	) {
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		fmt.Println("Received event:", event.Id, "with payload:", string(event.Payload))
+
+		if string(event.Payload) == `"good message"` {
+			t.Log("Received good message, acking and exiting")
+			if err := event.Ack(ctx); err != nil {
+				t.Fatalf("failed to ack good message: %s", err)
+			}
+			break
+		}
+
+		redeliveryAttempts++
+		t.Logf("Received event %s (redelivery attempt: %d)", event.Id, redeliveryAttempts)
+	}
+
+	if redeliveryAttempts != maxRedeliveries {
+		t.Fatalf("expected %d redelivery attempts, but got %d", maxRedeliveries, redeliveryAttempts)
+	}
+
+	// Verify no more redeliveries occur
+	time.Sleep(1 * time.Second)
 }

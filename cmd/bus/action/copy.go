@@ -114,7 +114,7 @@ func CopyCommand() *cli.Command {
 					if err != nil {
 						return err
 					}
-					defer r.Done()
+					defer func() { _ = r.Done() }()
 
 					var event bus.Event
 

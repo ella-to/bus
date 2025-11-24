@@ -46,6 +46,13 @@ type Event struct {
 	tc         trackCopy
 }
 
+// resetReadWriteState resets the internal state used for reading and writing.
+// During the redelivery of events, we need to reset the state to ensure correct serialization.
+func (e *Event) resetReadWriteState() {
+	e.writeState = 0
+	e.tc.reset()
+}
+
 // NOTE: I had to implement Read method to enhance the performance of the code
 // with the current implementation I gained around 50x performance improvement
 func (e *Event) Read(p []byte) (n int, err error) {
@@ -667,9 +674,10 @@ const (
 )
 
 const (
-	DefaultAck        = AckNone
-	DefaultStart      = StartNewest
-	DefaultRedelivery = 5 * time.Second
+	DefaultAck             = AckNone
+	DefaultStart           = StartNewest
+	DefaultRedelivery      = 5 * time.Second
+	DefaultRedeliveryCount = 3
 )
 
 //
@@ -735,11 +743,12 @@ type Putter interface {
 //
 
 type getOpt struct {
-	subject     string
-	ackStrategy string
-	redelivery  time.Duration
-	start       string
-	metaFn      func(map[string]string)
+	subject         string
+	ackStrategy     string
+	redelivery      time.Duration
+	redeliveryCount int
+	start           string
+	metaFn          func(map[string]string)
 }
 
 // GetOpt is an interface that can be used to configure the Get operation
@@ -839,13 +848,18 @@ func WithStartFrom(start string) GetOpt {
 	})
 }
 
-func WithDelivery(duration time.Duration) GetOpt {
+// WithDelivery sets the redelivery duration and count for the consumer
+// if the ack strategy is manual and the event is not acked within the duration
+// the event will be redelivered to the consumer up to the redelivery count
+// if the redelivery count is <= 0, the event will be redelivered indefinitely
+func WithDelivery(duration time.Duration, redeliveryCount int) GetOpt {
 	return GetOptFunc(func(g *getOpt) error {
 		if duration < 0 {
 			return errors.New("delivery duration should be greater than 0")
 		}
 
 		g.redelivery = duration
+		g.redeliveryCount = redeliveryCount
 		return nil
 	})
 }

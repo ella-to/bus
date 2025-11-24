@@ -65,7 +65,7 @@ func DebugCommand() *cli.Command {
 					if err != nil {
 						return err
 					}
-					defer r.Done()
+					defer func() { _ = r.Done() }()
 
 					var event bus.Event
 
@@ -77,7 +77,7 @@ func DebugCommand() *cli.Command {
 					count++
 					size += s
 
-					json.NewEncoder(c.App.Writer).Encode(event)
+					_ = json.NewEncoder(c.App.Writer).Encode(event)
 					return nil
 				}()
 				if errors.Is(err, io.EOF) {

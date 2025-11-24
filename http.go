@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,7 +95,7 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// GET /?subject=a.b.*&start=oldest&ack=manual&redelivery=5s
+// GET /?subject=a.b.*&start=oldest&ack=manual&redelivery=5s&redelivery_count=3
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -105,6 +106,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	start := defaultString(qs.Get("start"), DefaultStart)
 	ack := defaultStringOneOf(qs.Get("ack"), DefaultAck, AckManual, AckNone)
 	redelivery := defaultDuration(qs.Get("redelivery"), DefaultRedelivery)
+	redeliveryCount := defaultInt(qs.Get("redelivery_count"), DefaultRedeliveryCount)
 
 	if subject == "" {
 		http.Error(w, "missing subject in query string", http.StatusBadRequest)
@@ -116,7 +118,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("new consumer", "id", id, "subject", subject, "start", start, "ack", ack, "redelivery", redelivery)
+	slog.Info("new consumer", "id", id, "subject", subject, "start", start, "ack", ack, "redelivery", redelivery, "redelivery_count", redeliveryCount)
 	defer slog.Info("consumer closed", "id", id)
 
 	var startPos int64
@@ -156,15 +158,15 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 			// in both cases we should return and the defer will send the done message and also close the pusher
 			return
 		} else if err != nil {
-			pusher.Push(newSseError(err))
+			_ = pusher.Push(newSseError(err))
 			return
 		}
 
 		var event Event
 		_, err = io.Copy(&event, r)
-		r.Done()
+		_ = r.Done()
 		if err != nil {
-			pusher.Push(newSseError(err))
+			_ = pusher.Push(newSseError(err))
 			continue
 		}
 
@@ -194,19 +196,27 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 			}).Await(ctx)
 			if setAckMapError != nil {
 				slog.Error("failed to set signal channel for acking message", "error", setAckMapError, "consumer_id", id, "event_id", event.Id)
-				pusher.Push(newSseError(setAckMapError))
+				_ = pusher.Push(newSseError(setAckMapError))
 				continue
 			}
 		}
 
+		redeliveryCoutnEnabled := ack == AckManual && redeliveryCount > 0
+		redeliveryCountAttempted := 0
+
 		for {
+			// reset the read/write state before redelivery
+			// this is essential to ensure correct serialization when we copy the event to sse message
+			// without this, the event will be sent empty after the first delivery
+			event.resetReadWriteState()
+
 			// NOTE: we are creating a new SSE msg since msg has some
 			// io.Read and io.Write internal variables which are essential to
 			// io.Copy
 			msg, err := newSseEvent(&event)
 			if err != nil {
 				slog.Warn("failed to create a sse message from event", "error", err, "event_id", event.Id, "consumer_id", id)
-				pusher.Push(newSseError(err))
+				_ = pusher.Push(newSseError(err))
 				break
 			}
 
@@ -233,11 +243,19 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 					slog.Debug("received acked", "consumer_id", id, "event_id", event.Id)
 					break
 				case <-time.After(redelivery):
-					slog.Warn("redelivery", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId)
-					h.runner.Submit(ctx, func(ctx context.Context) error {
+					redeliveryCountAttempted++
+
+					_ = h.runner.Submit(ctx, func(ctx context.Context) error {
 						delete(h.waitingAckMap, key)
 						return nil
 					}).Await(ctx)
+
+					if redeliveryCoutnEnabled && redeliveryCountAttempted >= redeliveryCount {
+						slog.Warn("redelivery count exceeded, dropping event", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId)
+						break
+					}
+
+					slog.Warn("redelivery", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId, "redelivery_attempt_count", redeliveryCountAttempted)
 					continue
 				}
 			}
@@ -404,6 +422,19 @@ func defaultString(s string, def string) string {
 	}
 
 	return s
+}
+
+func defaultInt(s string, def int) int {
+	if s == "" {
+		return def
+	}
+
+	value, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+
+	return value
 }
 
 func defaultDuration(s string, def time.Duration) time.Duration {

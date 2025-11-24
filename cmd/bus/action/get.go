@@ -52,9 +52,14 @@ func GetCommand() *cli.Command {
 				Value: "auto",
 			},
 			&cli.DurationFlag{
-				Name:  "redelevery",
+				Name:  "redelivery-duration",
 				Usage: "redelivery duration",
 				Value: 5 * time.Second,
+			},
+			&cli.IntFlag{
+				Name:  "redelivery-count",
+				Usage: "redelivery count",
+				Value: 3,
 			},
 		},
 		Action: func(c *cli.Context) error {
@@ -63,6 +68,7 @@ func GetCommand() *cli.Command {
 			start := c.String("start")
 			ack := c.String("ack")
 			redelivery := c.Duration("redelivery-duration")
+			redeliveryCount := c.Int("redelivery-count")
 			autoAck := ack == "auto"
 
 			if autoAck {
@@ -74,7 +80,7 @@ func GetCommand() *cli.Command {
 			for event, err := range client.Get(c.Context,
 				bus.WithSubject(subject),
 				bus.WithStartFrom(start),
-				bus.WithDelivery(redelivery),
+				bus.WithDelivery(redelivery, redeliveryCount),
 				bus.WithAckStrategy(ack),
 				bus.WithExtractMeta(func(meta map[string]string) {
 					if v, ok := meta["consumer-id"]; ok {
