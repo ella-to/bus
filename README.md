@@ -9,130 +9,458 @@
 
 # Bus: A Persistent and High-Performance Message Bus
 
-`bus` is a robust, persistent message bus designed to streamline event handling with simplicity and flexibility. Based on [task](https://ella.to/task), a task runner, [solid](https://ella.to/solid), a signal/broadcast library, and [immuta](https://ella.to/immuta), an append-only log, `bus` delivers high performance, intuitive APIs, and resilient message persistence.
+<div align="center">
+
+[![Go Reference](https://pkg.go.dev/badge/ella.to/bus.svg)](https://pkg.go.dev/ella.to/bus)
+[![Go Report Card](https://goreportcard.com/badge/ella.to/bus)](https://goreportcard.com/report/ella.to/bus)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A lightweight, persistent message bus built for simplicity and performance. Perfect for microservices, real-time applications, and event-driven architectures.
+
+[Quick Start](#quick-start) • [Features](#key-features) • [Examples](#examples) • [API Reference](HTTP_API.md) • [CLI](#cli-commands)
+
+</div>
+
+---
+
+## Why Bus?
+
+- **Zero dependencies** on external services like Redis, Kafka, or RabbitMQ
+- **Persistent by default** - events survive server restarts
+- **HTTP/SSE transport** - works with any language, no special client needed
+- **Single binary** - easy deployment with Docker or standalone
 
 ## Key Features
 
-- ✅ **Persistent Event Storage** - Ensures message durability and reliability with a persistent log.
-- ✅ **Pattern Matching on Subjects** - Supports wildcard patterns like `a.*.b` or `a.>` to route events dynamically.
-- ✅ **Request/Reply Pattern** - Easily implement request-response communication with in-built support.
-- ✅ **HTTP and Server-Sent Events (SSE)** - Uses both standard HTTP and SSE for flexible, web-friendly transport.
-- ✅ **Multi-Consumer Confirmation** - Allows publishers to confirm when an event is acknowledged by a specified number of consumers.
-- ✅ **Ergonomic, Idiomatic API** - Designed with simplicity, adhering closely to Golang conventions for ease of use.
-- ✅ **High Performance** - Optimized for rapid event persistence and delivery.
-- ✅ **Redelivery and Acknowledgement** - Provides automatic message redelivery and various acknowledgement strategies for reliability.
-- ✅ **CLI for Debugging** - Comes with a command-line interface to publish, consume, and debug events easily.
+| Feature | Description |
+|---------|-------------|
+| 📦 **Persistent Storage** | Events are durably stored in append-only logs |
+| 🎯 **Pattern Matching** | Subscribe to `user.*`, `order.>`, or exact subjects |
+| 🔄 **Request/Reply** | Built-in RPC-style communication |
+| 🔐 **Encryption** | Optional at-rest encryption with NaCl |
+| 🔁 **Redelivery** | Automatic retry for unacknowledged messages |
+| ✅ **Confirmations** | Wait for N consumers to acknowledge |
+| 🌐 **SSE Streaming** | Real-time events via Server-Sent Events |
+| 🛠️ **CLI Tools** | Debug, dump, restore, and manage events |
 
-## Installation
+---
 
-to install sdk
+## Quick Start
 
-```shell
-go get ella.to/bus@v0.4.0
+### 1. Install
+
+**Go SDK:**
+```bash
+go get ella.to/bus@v0.5.0
 ```
 
-to install a cli, run the following
-
-```shell
-go install ella.to/bus/cmd/bus@v0.4.0
+**CLI:**
+```bash
+go install ella.to/bus/cmd/bus@v0.5.0
 ```
 
-and to run the server using docker, simply use the provided docker-compose and run it
-
+**Docker:**
+```bash
+docker pull ellato/bus:v0.5.0
 ```
-docker-compose up
+
+### 2. Start the Server
+
+Using Docker Compose (recommended):
+```bash
+# Create docker-compose.yml
+cat > docker-compose.yml << 'EOF'
+services:
+  bus:
+    image: ellato/bus:v0.5.0
+    environment:
+      - BUS_ADDR=0.0.0.0:2021
+      - BUS_PATH=/storage/events.log
+      - BUS_NAMESPACES=app,notifications,orders
+    ports:
+      - "2021:2021"
+    volumes:
+      - ./storage:/storage
+EOF
+
+docker-compose up -d
 ```
 
-## Namespaces
+Or using the CLI:
+```bash
+bus server --addr :2021 --path ./data --namespaces app,notifications,orders
+```
 
-Namespaces have been introduced to efficiently organize events by ensuring that not all events are saved in a single file. Each namespace has its own dedicated file. All namespaces must be defined when starting the Bus server by using the `--namespaces` flag.
+### 3. Publish and Subscribe
 
-### What Are Namespaces?
-
-Namespaces are essentially the first segment of a topic. For example, in the topic a.b.c, the namespace is a.
-
-The Bus server also includes a special namespace called `_bus_`, reserved for internal bus operations. It is strongly recommended not to consume events from the `_bus_` namespace.
-
-## Compression
-
-Bus supports **S2 compression** for fast encoding and decoding. Compression can be configured using the `BUS_COMPRESSION` environment variable or `--compression` flag with the following values:
-
-- `"none"` - No compression
-- `"s2"` - S2 compression (default)
-
-### Best Practices for Namespaces
-
-When defining namespaces, consider your business logic and choose meaningful names that clearly represent their purpose. For instance:
-
-- If the Bus is used to handle RPC calls, a good namespace might be `rpc`.
-- For user-related operations, you might use user.
-
-### Key Features and Limitations
-
-Event Sequencing Within Namespaces: The Bus guarantees the sequence of events stored within a single namespace.
-No Cross-Namespace Sequencing Guarantee: The Bus does not guarantee the sequence of messages stored across different namespaces.
-By following these guidelines, you can keep your Bus server organized and aligned with your application's goals.
-
-## Basic Example
-
-At its core, bus is a pub/sub library, enabling asynchronous communication between publishers and subscribers. Here’s how to publish an event after creating a client
-
-```golang
+```go
 package main
 
 import (
-	"context"
+    "context"
+    "fmt"
 
-	"ella.to/bus"
+    "ella.to/bus"
 )
 
 func main() {
-	client := bus.NewClient("http://localhost:2021")
+    client := bus.NewClient("http://localhost:2021")
+    ctx := context.Background()
 
-	ctx := context.Background()
+    // Publish an event
+    resp := client.Put(ctx,
+        bus.WithSubject("app.users.created"),
+        bus.WithData(map[string]string{"user_id": "123", "name": "Alice"}),
+    )
+    if resp.Error() != nil {
+        panic(resp.Error())
+    }
+    fmt.Printf("Published: %s\n", resp.Id)
 
-	// publish an event to subject "a.b.c" with data "hello world"
-	err := client.Put(
-		ctx,
-		bus.WithSubject("a.b.c"),
-		bus.WithData("hello world"),
-	).Error()
-	if err != nil {
-		panic(err)
-	}
-
-	// subscribe to subject "a.b.c" and since subscription is blocking
-	// we can use range to iterate over the events. For every event we
-	// need to ack it. If ack is not called, the event will be redelivered.
-	// Since an event is already published, we start from the oldest event by passing bus.WithStartFrom(bus.StartOldest) options.
-	for event, err := range client.Get(
-        ctx,
-        bus.WithSubject("a.b.c"),
+    // Subscribe to events
+    for event, err := range client.Get(ctx,
+        bus.WithSubject("app.users.*"),
         bus.WithStartFrom(bus.StartOldest),
     ) {
-		if err != nil {
-			panic(err)
-		}
-
-		// do something with the event
-		// e.g. print the data
-		println(string(event.Payload))
-
-		// ack the event
-		if err := event.Ack(ctx); err != nil {
-			panic(err)
-		}
-
-		// since there is only one event, we can break the loop
-		break
-	}
+        if err != nil {
+            panic(err)
+        }
+        fmt.Printf("Received: %s\n", event.Payload)
+        event.Ack(ctx)
+        break
+    }
 }
 ```
 
-## More Examples
+---
 
-for more examples, checkout examples folder
+## Examples
 
-# Reference
+### Pub/Sub Pattern
 
-logo was created using https://fsymbols.com/generators/carty
+The simplest pattern - publish events and subscribe to them:
+
+```go
+// Publisher
+client.Put(ctx,
+    bus.WithSubject("notifications.email"),
+    bus.WithData(map[string]string{
+        "to":      "user@example.com",
+        "subject": "Welcome!",
+    }),
+)
+
+// Subscriber (can be in a different service)
+for event, err := range client.Get(ctx,
+    bus.WithSubject("notifications.*"),
+    bus.WithStartFrom(bus.StartNewest),
+    bus.WithAckStrategy(bus.AckManual),
+    bus.WithDelivery(5*time.Second, 3), // retry 3 times, 5s apart
+) {
+    if err != nil {
+        log.Printf("Error: %v", err)
+        continue
+    }
+    
+    // Process the notification
+    sendEmail(event.Payload)
+    
+    // Acknowledge to prevent redelivery
+    event.Ack(ctx)
+}
+```
+
+### Request/Reply Pattern
+
+Implement RPC-style communication:
+
+```go
+// Service (handles math.add requests)
+go func() {
+    for event, err := range client.Get(ctx,
+        bus.WithSubject("math.add"),
+        bus.WithStartFrom(bus.StartOldest),
+    ) {
+        if err != nil {
+            continue
+        }
+        
+        var req struct{ A, B int }
+        json.Unmarshal(event.Payload, &req)
+        
+        // Reply with result
+        event.Ack(ctx, bus.WithData(map[string]int{
+            "result": req.A + req.B,
+        }))
+    }
+}()
+
+// Client (makes the request)
+resp := client.Put(ctx,
+    bus.WithSubject("math.add"),
+    bus.WithData(map[string]int{"A": 10, "B": 20}),
+    bus.WithRequestReply(),
+)
+
+var result struct{ Result int }
+json.Unmarshal(resp.Payload, &result)
+fmt.Println(result.Result) // 30
+```
+
+### Publisher Confirmation
+
+Wait for consumers to acknowledge before continuing:
+
+```go
+// Subscriber must be running first
+go func() {
+    for event, _ := range client.Get(ctx,
+        bus.WithSubject("critical.events"),
+        bus.WithStartFrom(bus.StartOldest),
+    ) {
+        processEvent(event)
+        event.Ack(ctx) // This unblocks the publisher
+    }
+}()
+
+// Publisher waits for 1 consumer to ack
+err := client.Put(ctx,
+    bus.WithSubject("critical.events"),
+    bus.WithData("important data"),
+    bus.WithConfirm(1), // Wait for 1 acknowledgment
+).Error()
+```
+
+---
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BUS_ADDR` | Server listen address | `:2021` |
+| `BUS_PATH` | Storage directory path | `./data` |
+| `BUS_NAMESPACES` | Comma-separated namespace list | *required* |
+| `BUS_SECRET_KEY` | Encryption key (enables encryption) | *disabled* |
+| `BUS_BLOCK_SIZE` | Encryption block size | `4096` |
+| `BUS_LOG_LEVEL` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR` | `INFO` |
+
+### Namespaces
+
+Namespaces organize events into separate files for better performance. The namespace is the first segment of a subject:
+
+```
+subject: "orders.created"
+          └──────┬──────┘
+          namespace: "orders"
+```
+
+**Rules:**
+- All namespaces must be declared at server startup
+- `_bus_` is reserved for internal operations
+- Events in different namespaces have independent ordering
+
+```bash
+# Start with multiple namespaces
+bus server --namespaces orders,users,notifications,analytics
+```
+
+### Subject Patterns
+
+| Pattern | Matches | Example |
+|---------|---------|---------|
+| `orders.created` | Exact match only | `orders.created` |
+| `orders.*` | Single segment wildcard | `orders.created`, `orders.updated` |
+| `orders.>` | Multi-segment wildcard | `orders.created`, `orders.item.added` |
+
+---
+
+## Encryption
+
+Bus supports optional at-rest encryption using NaCl (XSalsa20-Poly1305):
+
+```bash
+# Enable encryption with a secret key
+bus server --namespaces app --secret-key "your-secret-key-here" --block-size 4096
+```
+
+Or via environment:
+```yaml
+environment:
+  - BUS_SECRET_KEY=your-secret-key-here
+  - BUS_BLOCK_SIZE=4096
+```
+
+**Notes:**
+- The secret key is hashed with SHA-256 to produce a 32-byte key
+- Block size affects performance: larger blocks = better throughput, more memory
+- Recommended block sizes: 4096 (default), 8192, or 16384
+
+---
+
+## CLI Commands
+
+### Server
+
+```bash
+# Start the server
+bus server --addr :2021 --path ./data --namespaces app,orders
+
+# With encryption
+bus server --namespaces app --secret-key "my-key"
+```
+
+### Publish Events
+
+```bash
+# Simple publish
+bus put --subject "app.test" --data '{"hello": "world"}'
+
+# With trace ID
+bus put --subject "app.test" --data "test" --trace-id "req-123"
+```
+
+### Subscribe to Events
+
+```bash
+# Subscribe from oldest
+bus get --subject "app.*" --start oldest
+
+# With manual ack
+bus get --subject "app.critical" --ack manual --redelivery 10s
+```
+
+### Acknowledge Events
+
+```bash
+bus ack --consumer-id c_xxx --event-id e_yyy
+```
+
+### Debug & Maintenance
+
+```bash
+# Debug/inspect events
+bus debug --path ./data
+
+# Dump events to file
+bus dump --path ./data --output events.json
+
+# Restore from dump
+bus restore --path ./data --input events.json
+
+# Copy events between servers
+bus copy --from ./data --to ./backup
+```
+
+---
+
+## HTTP API
+
+Bus exposes a simple HTTP API. See [HTTP_API.md](HTTP_API.md) for complete documentation.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST /` | Publish event | Body: JSON with `subject` and `payload` |
+| `GET /?subject=...` | Subscribe (SSE) | Returns Server-Sent Events stream |
+| `PUT /?consumer_id=...&event_id=...` | Acknowledge | Confirms message receipt |
+
+### JavaScript/Browser Example
+
+```javascript
+// Publish
+await fetch('http://localhost:2021/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        subject: 'chat.room1',
+        payload: { user: 'Alice', message: 'Hello!' }
+    })
+});
+
+// Subscribe
+const events = new EventSource('http://localhost:2021/?subject=chat.*&start=newest');
+events.addEventListener('msg', (e) => {
+    const data = JSON.parse(e.data);
+    console.log('Message:', data.payload);
+});
+```
+
+---
+
+## Architecture
+
+Bus is built on top of:
+
+- **[immuta](https://ella.to/immuta)** - Append-only log storage
+- **[task](https://ella.to/task)** - Task runner for concurrent operations
+- **[solid](https://ella.to/solid)** - Signal/broadcast primitives
+- **[sse](https://ella.to/sse)** - Server-Sent Events implementation
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Client    │────▶│   Server    │────▶│   Immuta    │
+│  (HTTP/SSE) │◀────│  (Handler)  │◀────│  (Storage)  │
+└─────────────┘     └─────────────┘     └─────────────┘
+                           │
+                    ┌──────┴──────┐
+                    │   Crypto    │
+                    │ (Optional)  │
+                    └─────────────┘
+```
+
+---
+
+## Production Deployment
+
+### Docker Compose (Recommended)
+
+```yaml
+services:
+  bus:
+    image: ellato/bus:v0.5.0
+    restart: unless-stopped
+    environment:
+      - BUS_ADDR=0.0.0.0:2021
+      - BUS_PATH=/storage
+      - BUS_NAMESPACES=orders,users,notifications
+      - BUS_SECRET_KEY=${BUS_SECRET_KEY}  # From .env file
+      - BUS_LOG_LEVEL=INFO
+    ports:
+      - "2021:2021"
+    volumes:
+      - bus_data:/storage
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:2021/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  bus_data:
+```
+
+### Health Check
+
+```bash
+# Simple health check - server returns 400 for GET without subject
+curl -s -o /dev/null -w "%{http_code}" http://localhost:2021/
+```
+
+---
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+
+Logo created using [fsymbols.com](https://fsymbols.com/generators/carty)
+
+</div>
