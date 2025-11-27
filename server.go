@@ -315,7 +315,7 @@ func (h *Handler) Ack(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func CreateHandler(logsDirPath string, namespaces []string, compressor immuta.Compressor) (*Handler, error) {
+func CreateHandler(logsDirPath string, namespaces []string, secretKey string, blockSize int) (*Handler, error) {
 	{
 		// This block is used to validate the namespaces
 		// and make sure there is no reserved and duplicate namespaces
@@ -338,13 +338,20 @@ func CreateHandler(logsDirPath string, namespaces []string, compressor immuta.Co
 		}
 	}
 
-	eventStorage, err := immuta.New(
+	immutaOpts := []immuta.OptionFunc{
 		immuta.WithLogsDirPath(logsDirPath),
 		immuta.WithReaderCount(5),
 		immuta.WithFastWrite(true),
 		immuta.WithNamespaces(namespaces...),
-		immuta.WithCompression(compressor),
-	)
+	}
+
+	if secretKey != "" {
+		encryption := NewEncryption(secretKey, blockSize)
+		immutaOpts = append(immutaOpts, immuta.WithWriteTransform(encryption.Encode))
+		immutaOpts = append(immutaOpts, immuta.WithReadTransform(encryption.Decode))
+	}
+
+	eventStorage, err := immuta.New(immutaOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -394,8 +401,8 @@ func handleOptions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func NewServer(addr string, logsDirPath string, namespaces []string, compressor immuta.Compressor) (*http.Server, error) {
-	handler, err := CreateHandler(logsDirPath, namespaces, compressor)
+func NewServer(addr string, logsDirPath string, namespaces []string, secretKey string, blockSize int) (*http.Server, error) {
+	handler, err := CreateHandler(logsDirPath, namespaces, secretKey, blockSize)
 	if err != nil {
 		return nil, err
 	}
