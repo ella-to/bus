@@ -9,8 +9,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/urfave/cli/v3"
+
 	"ella.to/bus"
-	"github.com/urfave/cli/v2"
 )
 
 // bus dump --host http://localhost:2021 --namespace test --output-dir ./
@@ -36,10 +37,10 @@ func DumpCommand() *cli.Command {
 				Value: "./",
 			},
 		},
-		Action: func(c *cli.Context) error {
-			host := c.String("host")
-			namespaces := getSliceValues("", c.String("namespaces"), ",")
-			outputDir := c.String("output-dir")
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			host := cmd.String("host")
+			namespaces := getSliceValues("", cmd.String("namespaces"), ",")
+			outputDir := cmd.String("output-dir")
 
 			_, err := os.Stat(outputDir)
 			if errors.Is(err, os.ErrExist) {
@@ -66,7 +67,7 @@ func DumpCommand() *cli.Command {
 					var i int64
 
 					signal := make(chan struct{}, 1)
-					ctx, cancel := context.WithCancel(c.Context)
+					innerCtx, cancel := context.WithCancel(ctx)
 					go func() {
 						defer cancel()
 
@@ -76,14 +77,14 @@ func DumpCommand() *cli.Command {
 								// reset the timeout
 							case <-time.After(2 * time.Second):
 								return
-							case <-ctx.Done():
+							case <-innerCtx.Done():
 								return
 							}
 						}
 					}()
 
 					for msg, err := range client.Get(
-						ctx,
+						innerCtx,
 						bus.WithSubject(namespace+".>"),
 						bus.WithStartFrom(bus.StartOldest),
 						bus.WithAckStrategy(bus.AckNone),

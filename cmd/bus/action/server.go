@@ -9,15 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"ella.to/bus"
-	"ella.to/bus/compress"
-	"ella.to/immuta"
 )
 
 const logo = `
@@ -50,30 +49,26 @@ func ServerCommand() *cli.Command {
 				Usage: "list of namespaces separated by comma",
 			},
 			&cli.StringFlag{
-				Name:  "compression",
-				Usage: `set compression algorithm to use for event log files. Options are: "none", "s2"`,
-				Value: "s2",
+				Name:  "secret-key",
+				Usage: `secret key used to encrypt the events log files`,
+				Value: "",
+			},
+			&cli.IntFlag{
+				Name:  "block-size",
+				Usage: `block size used to encrypt the events log files`,
+				Value: 4 * 1024,
 			},
 		},
-		Action: func(c *cli.Context) error {
+		Action: func(ctx context.Context, cmd *cli.Command) error {
 			logLevel := getLogLevel(getValue(os.Getenv("BUS_LOG_LEVEL"), "INFO"))
-			addr := getValue(os.Getenv("BUS_ADDR"), c.String("addr"))
-			path := getValue(os.Getenv("BUS_PATH"), c.String("path"))
-			namespaces := getSliceValues(os.Getenv("BUS_NAMESPACES"), c.String("namespaces"), ",")
-			compression := getValue(os.Getenv("BUS_COMPRESSION"), c.String("compression"))
-
-			var compressor immuta.Compressor
-			switch strings.ToLower(compression) {
-			case "none":
-				compressor = nil
-			case "s2", "":
-				compressor = compress.NewS2Compressor()
-			default:
-				return fmt.Errorf("unknown compression algorithm: %s", compression)
-			}
+			addr := getValue(os.Getenv("BUS_ADDR"), cmd.String("addr"))
+			path := getValue(os.Getenv("BUS_PATH"), cmd.String("path"))
+			namespaces := getSliceValues(os.Getenv("BUS_NAMESPACES"), cmd.String("namespaces"), ",")
+			secretKey := getValue(os.Getenv("BUS_SECRET_KEY"), cmd.String("secret-key"))
+			blockSize := getIntValue(os.Getenv("BUS_BLOCK_SIZE"), cmd.Int("block-size"))
 
 			if len(namespaces) == 0 {
-				return fmt.Errorf("no namespaces provided")
+				return errors.New("no namespaces provided")
 			}
 
 			slog.SetLogLoggerLevel(logLevel)
@@ -86,7 +81,7 @@ func ServerCommand() *cli.Command {
 				return err
 			}
 
-			handler, err := bus.CreateHandler(path, namespaces, compressor)
+			handler, err := bus.CreateHandler(path, namespaces, secretKey, blockSize)
 			if err != nil {
 				return err
 			}
@@ -103,7 +98,7 @@ func ServerCommand() *cli.Command {
 			// Goroutine to start the server
 			go func() {
 				fmt.Printf(logo, bus.Version, bus.GitCommit)
-				slog.Info("server started", "address", addr, "namespaces", namespaces, "events_log_file", path, "compression", compression, "log_level", logLevel.String())
+				slog.Info("server started", "address", addr, "namespaces", namespaces, "events_log_file", path, "log_level", logLevel.String())
 
 				if listenErr := server.ListenAndServe(); listenErr != nil && !errors.Is(err, http.ErrServerClosed) {
 					slog.Error("failed to start server", "error", err)
@@ -120,7 +115,7 @@ func ServerCommand() *cli.Command {
 			}
 
 			// Create a context with a timeout for the shutdown
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 
 			// Attempt graceful shutdown
@@ -159,6 +154,19 @@ func getValue(seq ...string) string {
 		}
 	}
 	return ""
+}
+
+func getIntValue(value string, defaultValue int) int {
+	if value == "" {
+		return defaultValue
+	}
+
+	v, err := strconv.ParseInt(value, 10, 4)
+	if err != nil {
+		return defaultValue
+	}
+
+	return int(v)
 }
 
 func getLogLevel(value string) slog.Level {

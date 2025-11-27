@@ -1,12 +1,13 @@
 package action
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"ella.to/bus"
 )
@@ -32,7 +33,7 @@ func GetCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:  "start",
 				Usage: "start consuming from, oldest, newest or event id",
-				Action: func(c *cli.Context, value string) error {
+				Action: func(ctx context.Context, cmd *cli.Command, value string) error {
 					if value != "newest" && value != "oldest" && !strings.HasPrefix(value, "e_") {
 						return cli.Exit("invalid position, it should be one of newest, oldest or and event id", 1)
 					}
@@ -43,7 +44,7 @@ func GetCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:  "ack",
 				Usage: "ack strategy, auto, manual or none",
-				Action: func(c *cli.Context, value string) error {
+				Action: func(ctx context.Context, cmd *cli.Command, value string) error {
 					if value != "auto" && value != "manual" && value != "none" {
 						return cli.Exit("invalid ack strategy, it should be one of auto, manual or none", 1)
 					}
@@ -62,13 +63,13 @@ func GetCommand() *cli.Command {
 				Value: 3,
 			},
 		},
-		Action: func(c *cli.Context) error {
-			host := c.String("host")
-			subject := c.String("subject")
-			start := c.String("start")
-			ack := c.String("ack")
-			redelivery := c.Duration("redelivery-duration")
-			redeliveryCount := c.Int("redelivery-count")
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			host := cmd.String("host")
+			subject := cmd.String("subject")
+			start := cmd.String("start")
+			ack := cmd.String("ack")
+			redelivery := cmd.Duration("redelivery-duration")
+			redeliveryCount := cmd.Int("redelivery-count")
 			autoAck := ack == "auto"
 
 			if autoAck {
@@ -77,14 +78,15 @@ func GetCommand() *cli.Command {
 
 			client := bus.NewClient(host)
 
-			for event, err := range client.Get(c.Context,
+			for event, err := range client.Get(
+				ctx,
 				bus.WithSubject(subject),
 				bus.WithStartFrom(start),
 				bus.WithDelivery(redelivery, redeliveryCount),
 				bus.WithAckStrategy(ack),
 				bus.WithExtractMeta(func(meta map[string]string) {
 					if v, ok := meta["consumer-id"]; ok {
-						fmt.Fprintf(c.App.ErrWriter, "consumer-id: %s\n", v)
+						fmt.Fprintf(cmd.ErrWriter, "consumer-id: %s\n", v)
 					}
 				}),
 			) {
@@ -92,13 +94,13 @@ func GetCommand() *cli.Command {
 					return err
 				}
 
-				err = json.NewEncoder(c.App.Writer).Encode(event)
+				err = json.NewEncoder(cmd.Writer).Encode(event)
 				if err != nil {
 					return err
 				}
 
 				if autoAck {
-					if err := event.Ack(c.Context); err != nil {
+					if err := event.Ack(ctx); err != nil {
 						return err
 					}
 				}

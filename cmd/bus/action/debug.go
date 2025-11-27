@@ -9,10 +9,10 @@ import (
 	"log"
 	"time"
 
-	"ella.to/immuta"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"ella.to/bus"
+	"ella.to/immuta"
 )
 
 func DebugCommand() *cli.Command {
@@ -30,17 +30,38 @@ func DebugCommand() *cli.Command {
 				Usage:    "namespace to filter events",
 				Required: true,
 			},
+			&cli.StringFlag{
+				Name:  "secret-key",
+				Usage: `secret key used to encrypt the events log files`,
+				Value: "",
+			},
+			&cli.IntFlag{
+				Name:  "block-size",
+				Usage: `block size used to encrypt the events log files`,
+				Value: 4 * 1024,
+			},
 		},
-		Action: func(c *cli.Context) error {
-			dir := c.String("dir")
-			namespace := c.String("namespace")
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			dir := cmd.String("dir")
+			namespace := cmd.String("namespace")
 
-			im, err := immuta.New(
+			secretKey := cmd.String("secret-key")
+			blockSize := cmd.Int("block-size")
+
+			opts := []immuta.OptionFunc{
 				immuta.WithLogsDirPath(dir),
 				immuta.WithNamespaces(namespace),
 				immuta.WithFastWrite(true),
 				immuta.WithReaderCount(2),
-			)
+			}
+
+			if secretKey != "" {
+				encryption := bus.NewEncryption(secretKey, blockSize)
+				opts = append(opts, immuta.WithWriteTransform(encryption.Encode))
+				opts = append(opts, immuta.WithReadTransform(encryption.Decode))
+			}
+
+			im, err := immuta.New(opts...)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -77,7 +98,7 @@ func DebugCommand() *cli.Command {
 					count++
 					size += s
 
-					_ = json.NewEncoder(c.App.Writer).Encode(event)
+					_ = json.NewEncoder(cmd.Writer).Encode(event)
 					return nil
 				}()
 				if errors.Is(err, io.EOF) {
@@ -89,10 +110,10 @@ func DebugCommand() *cli.Command {
 				}
 			}
 
-			fmt.Fprintf(c.App.Writer, "-----\n")
-			fmt.Fprintf(c.App.Writer, "total events:\t%d\n", count)
-			fmt.Fprintf(c.App.Writer, "total size:\t%d bytes\n", size)
-			fmt.Fprintf(c.App.Writer, "-----\n")
+			fmt.Fprintf(cmd.Writer, "-----\n")
+			fmt.Fprintf(cmd.Writer, "total events:\t%d\n", count)
+			fmt.Fprintf(cmd.Writer, "total size:\t%d bytes\n", size)
+			fmt.Fprintf(cmd.Writer, "-----\n")
 
 			return nil
 		},

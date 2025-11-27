@@ -1,9 +1,10 @@
 package action
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"ella.to/bus"
 )
@@ -28,7 +29,7 @@ func PutCommand() *cli.Command {
 			&cli.Int64Flag{
 				Name:  "confirm",
 				Usage: "number of confirmations to wait for",
-				Action: func(c *cli.Context, value int64) error {
+				Action: func(ctx context.Context, cmd *cli.Command, value int64) error {
 					if value < 1 {
 						return cli.Exit("confirm-count should be greater than 0", 1)
 					}
@@ -42,15 +43,16 @@ func PutCommand() *cli.Command {
 				Value: "{}",
 			},
 		},
-		Action: func(c *cli.Context) error {
-			host := c.String("host")
-			subject := c.String("subject")
-			confirmCount := c.Int64("confirm")
-			data := c.String("data")
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			host := cmd.String("host")
+			subject := cmd.String("subject")
+			confirmCount := cmd.Int64("confirm")
+			data := cmd.String("data")
 
 			client := bus.NewClient(host)
 
-			resp := client.Put(c.Context,
+			resp := client.Put(
+				ctx,
 				bus.WithSubject(subject),
 				bus.WithData(data),
 				bus.WithConfirm(int(confirmCount)),
@@ -59,8 +61,8 @@ func PutCommand() *cli.Command {
 				return resp.Error()
 			}
 
-			fmt.Fprintf(c.App.ErrWriter, "%s\n", resp)
-			fmt.Fprintf(c.App.Writer, "%s\n", string(resp.Payload))
+			fmt.Fprintf(cmd.ErrWriter, "%s\n", resp)
+			fmt.Fprintf(cmd.Writer, "%s\n", string(resp.Payload))
 
 			return nil
 		},

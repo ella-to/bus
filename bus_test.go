@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"ella.to/bus"
-	"ella.to/bus/compress"
 	"ella.to/immuta"
 	"ella.to/task"
 )
@@ -46,14 +45,13 @@ func createBusServer(t *testing.T, eventLogsDir string) *bus.Client {
 	return bus.NewClient(server.URL)
 }
 
-func createBusServerWithCompression(t *testing.T, eventLogsDir string, compressor immuta.Compressor) *bus.Client {
+func createBusServerWithCompression(t *testing.T, eventLogsDir string) *bus.Client {
 	os.RemoveAll(eventLogsDir)
 
 	storage, err := immuta.New(
 		immuta.WithLogsDirPath(eventLogsDir),
 		immuta.WithNamespaces("a"),
 		immuta.WithFastWrite(true),
-		immuta.WithCompression(compressor),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +321,7 @@ func BenchmarkDecodeEventUsingJSON(b *testing.B) {
 }
 
 func TestBusWithS2Compression_BasicPutGet(t *testing.T) {
-	client := createBusServerWithCompression(t, "TestBusWithS2Compression_BasicPutGet", compress.NewS2Compressor())
+	client := createBusServerWithCompression(t, "TestBusWithS2Compression_BasicPutGet")
 
 	// Put an event
 	resp := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData("hello world with compression"))
@@ -371,7 +369,7 @@ func TestBusWithS2Compression_BasicPutGet(t *testing.T) {
 }
 
 func TestBusWithS2Compression_MultipleEvents(t *testing.T) {
-	client := createBusServerWithCompression(t, "TestBusWithS2Compression_MultipleEvents", compress.NewS2Compressor())
+	client := createBusServerWithCompression(t, "TestBusWithS2Compression_MultipleEvents")
 
 	// Put multiple events
 	eventCount := 100
@@ -421,7 +419,7 @@ func TestBusWithS2Compression_MultipleEvents(t *testing.T) {
 }
 
 func TestBusWithS2Compression_LargePayload(t *testing.T) {
-	client := createBusServerWithCompression(t, "TestBusWithS2Compression_LargePayload", compress.NewS2Compressor())
+	client := createBusServerWithCompression(t, "TestBusWithS2Compression_LargePayload")
 
 	// Create a moderately large payload with structured data (should compress well)
 	largeData := make([]map[string]interface{}, 0, 100)
@@ -481,7 +479,7 @@ func TestBusWithS2Compression_LargePayload(t *testing.T) {
 }
 
 func TestBusWithS2Compression_ConcurrentPutGet(t *testing.T) {
-	client := createBusServerWithCompression(t, "TestBusWithS2Compression_ConcurrentPutGet", compress.NewS2Compressor())
+	client := createBusServerWithCompression(t, "TestBusWithS2Compression_ConcurrentPutGet")
 
 	n := 50 // events per producer
 	p := 5  // number of producers
@@ -549,7 +547,7 @@ func TestBusWithS2Compression_ConcurrentPutGet(t *testing.T) {
 }
 
 func TestBusWithS2Compression_ComplexPayload(t *testing.T) {
-	client := createBusServerWithCompression(t, "TestBusWithS2Compression_ComplexPayload", compress.NewS2Compressor())
+	client := createBusServerWithCompression(t, "TestBusWithS2Compression_ComplexPayload")
 
 	// Create a complex nested JSON payload
 	complexData := map[string]interface{}{
@@ -610,73 +608,6 @@ func TestBusWithS2Compression_ComplexPayload(t *testing.T) {
 
 		t.Log("Successfully transmitted complex nested JSON with compression")
 		break
-	}
-}
-
-func BenchmarkBusWithS2Compression_Put(b *testing.B) {
-	os.RemoveAll("BenchmarkBusWithS2Compression_Put")
-	defer os.RemoveAll("BenchmarkBusWithS2Compression_Put")
-
-	storage, err := immuta.New(
-		immuta.WithLogsDirPath("BenchmarkBusWithS2Compression_Put"),
-		immuta.WithNamespaces("a"),
-		immuta.WithFastWrite(true),
-		immuta.WithCompression(compress.NewS2Compressor()),
-	)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer storage.Close()
-
-	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)))
-	server := httptest.NewServer(handler)
-	defer server.Close()
-
-	client := bus.NewClient(server.URL)
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		resp := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData("hello world"))
-		if resp.Error() != nil {
-			b.Fatal(resp.Error())
-		}
-	}
-}
-
-func BenchmarkBusWithS2Compression_PutLarge(b *testing.B) {
-	os.RemoveAll("BenchmarkBusWithS2Compression_PutLarge")
-	defer os.RemoveAll("BenchmarkBusWithS2Compression_PutLarge")
-
-	storage, err := immuta.New(
-		immuta.WithLogsDirPath("BenchmarkBusWithS2Compression_PutLarge"),
-		immuta.WithNamespaces("a"),
-		immuta.WithFastWrite(true),
-		immuta.WithCompression(compress.NewS2Compressor()),
-	)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer storage.Close()
-
-	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)))
-	server := httptest.NewServer(handler)
-	defer server.Close()
-
-	client := bus.NewClient(server.URL)
-
-	// Large repetitive data that compresses well
-	largeData := strings.Repeat("test data ", 1000)
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		resp := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithData(largeData))
-		if resp.Error() != nil {
-			b.Fatal(resp.Error())
-		}
 	}
 }
 

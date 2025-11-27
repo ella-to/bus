@@ -11,11 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"ella.to/bus/compress"
-	"ella.to/immuta"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 
 	"ella.to/bus"
+	"ella.to/immuta"
 )
 
 func CopyCommand() *cli.Command {
@@ -33,33 +32,45 @@ func CopyCommand() *cli.Command {
 				Usage:    "source namespace to copy events from",
 				Required: true,
 			},
-			&cli.BoolFlag{
-				Name:  "src-compressed",
-				Usage: "indicates if the source namespace is compressed",
-				Value: true,
-			},
 			&cli.StringFlag{
 				Name:     "dst",
 				Usage:    "destination namespace to copy events to",
 				Required: true,
 			},
-			&cli.BoolFlag{
-				Name:  "dst-compressed",
-				Usage: "indicates if the destination namespace is compressed",
-				Value: true,
-			},
 			&cli.StringFlag{
 				Name:  "skip-ids",
 				Usage: "skip events with these ids, comma-separated",
 			},
+			&cli.StringFlag{
+				Name:  "src-secret-key",
+				Usage: `secret key used to encrypt the events log files for the source`,
+				Value: "",
+			},
+			&cli.IntFlag{
+				Name:  "src-block-size",
+				Usage: `block size used to encrypt the events log files for the source`,
+				Value: 4 * 1024,
+			},
+			&cli.StringFlag{
+				Name:  "dst-secret-key",
+				Usage: `secret key used to encrypt the events log file for the destination`,
+				Value: "",
+			},
+			&cli.IntFlag{
+				Name:  "dst-block-size",
+				Usage: `block size used to encrypt the events log files for the destination`,
+				Value: 4 * 1024,
+			},
 		},
-		Action: func(c *cli.Context) error {
-			dir := c.String("dir")
-			src := c.String("src")
-			isSrcCompressed := c.Bool("src-compressed")
-			dst := c.String("dst")
-			isDstCompressed := c.Bool("dst-compressed")
-			skipIDs := strings.Split(c.String("skip-ids"), ",")
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			dir := cmd.String("dir")
+			src := cmd.String("src")
+			dst := cmd.String("dst")
+			skipIDs := strings.Split(cmd.String("skip-ids"), ",")
+			srcSecretKey := cmd.String("src-secret-key")
+			srcBlockSize := cmd.Int("src-block-size")
+			dstSecretKey := cmd.String("dst-secret-key")
+			dstBlockSize := cmd.Int("dst-block-size")
 
 			srcOpts := []immuta.OptionFunc{
 				immuta.WithLogsDirPath(dir),
@@ -68,8 +79,10 @@ func CopyCommand() *cli.Command {
 				immuta.WithReaderCount(2),
 			}
 
-			if isSrcCompressed {
-				srcOpts = append(srcOpts, immuta.WithCompression(compress.NewS2Compressor()))
+			if srcSecretKey != "" {
+				srcEncryption := bus.NewEncryption(srcSecretKey, srcBlockSize)
+				srcOpts = append(srcOpts, immuta.WithWriteTransform(srcEncryption.Encode))
+				srcOpts = append(srcOpts, immuta.WithReadTransform(srcEncryption.Decode))
 			}
 
 			immutaSrc, err := immuta.New(srcOpts...)
@@ -86,8 +99,10 @@ func CopyCommand() *cli.Command {
 				immuta.WithReaderCount(2),
 			}
 
-			if isDstCompressed {
-				dstOpts = append(dstOpts, immuta.WithCompression(compress.NewS2Compressor()))
+			if dstSecretKey != "" {
+				dstEncryption := bus.NewEncryption(dstSecretKey, dstBlockSize)
+				dstOpts = append(dstOpts, immuta.WithWriteTransform(dstEncryption.Encode))
+				dstOpts = append(dstOpts, immuta.WithReadTransform(dstEncryption.Decode))
 			}
 
 			immutaDst, err := immuta.New(dstOpts...)
@@ -95,7 +110,7 @@ func CopyCommand() *cli.Command {
 				return err
 			}
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
 
 			stream := immutaSrc.Stream(ctx, src, 0)
@@ -147,12 +162,12 @@ func CopyCommand() *cli.Command {
 				}
 			}
 
-			fmt.Fprintf(c.App.Writer, "-----\n")
-			fmt.Fprintf(c.App.Writer, "total events:\t%d\n", count)
-			fmt.Fprintf(c.App.Writer, "total size:\t%d bytes\n", size)
-			fmt.Fprintf(c.App.Writer, "skipped events:\t%d\n", skippedCount)
-			fmt.Fprintf(c.App.Writer, "destination namespace:\t%s\n", dst)
-			fmt.Fprintf(c.App.Writer, "-----\n")
+			fmt.Fprintf(cmd.Writer, "-----\n")
+			fmt.Fprintf(cmd.Writer, "total events:\t%d\n", count)
+			fmt.Fprintf(cmd.Writer, "total size:\t%d bytes\n", size)
+			fmt.Fprintf(cmd.Writer, "skipped events:\t%d\n", skippedCount)
+			fmt.Fprintf(cmd.Writer, "destination namespace:\t%s\n", dst)
+			fmt.Fprintf(cmd.Writer, "-----\n")
 
 			return nil
 		},

@@ -3,13 +3,15 @@ package action
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/urfave/cli/v3"
+
 	"ella.to/bus"
-	"github.com/urfave/cli/v2"
 )
 
 // bus restore --host http://localhost:2021 --input-dir ./
@@ -30,9 +32,9 @@ func RestoreCommand() *cli.Command {
 				Required: true,
 			},
 		},
-		Action: func(c *cli.Context) error {
-			inputDir := c.String("input-dir")
-			host := c.String("host")
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			inputDir := cmd.String("input-dir")
+			host := cmd.String("host")
 
 			files, err := getFilesInDir(inputDir)
 			if err != nil {
@@ -66,7 +68,7 @@ func RestoreCommand() *cli.Command {
 						}
 
 						err = client.Put(
-							c.Context,
+							ctx,
 							bus.WithId(event.Id),
 							bus.WithTraceId(event.TraceId),
 							bus.WithSubject(event.Subject),

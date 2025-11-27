@@ -1,7 +1,9 @@
 package action
 
 import (
-	"github.com/urfave/cli/v2"
+	"context"
+
+	"github.com/urfave/cli/v3"
 
 	"ella.to/bus"
 )
@@ -27,14 +29,14 @@ func AckCommand() *cli.Command {
 				Required: true,
 			},
 		},
-		Action: func(c *cli.Context) error {
-			host := c.String("host")
-			consumerId := c.String("consumer-id")
-			eventId := c.String("event-id")
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			host := cmd.String("host")
+			consumerId := cmd.String("consumer-id")
+			eventId := cmd.String("event-id")
 
 			client := bus.NewClient(host)
 
-			return client.Ack(c.Context, consumerId, eventId)
+			return client.Ack(ctx, consumerId, eventId)
 		},
 	}
 }
