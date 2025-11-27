@@ -6,10 +6,12 @@ services:
       - BUS_LOG_LEVEL=INFO
       - BUS_PATH=/storage/events.log
       - BUS_ADDR=0.0.0.0:2021
-      - BUS_COMPRESSION=s2 # options: none, s2
       # each application requires a different namespaces
       # list them separated by comma here
-      - BUS_NAMESPACES=namespace1,namespace2 
+      - BUS_NAMESPACES=namespace1,namespace2
+      # optional encryption settings
+      # - BUS_SECRET_KEY=secret-key-for-encryption
+      # - BUS_BLOCK_SIZE=4096
 
     # if ports is removed, then the bus service can
     # only be accessed from within the network bus

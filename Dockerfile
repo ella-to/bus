@@ -22,7 +22,7 @@ RUN go build -ldflags="-w -s -X main.GitCommit=${GIT_COMMIT} -X main.Version=${V
 ###############################################################################
 ### run stage
 ###############################################################################
-FROM alpine:3.20
+FROM alpine:3.22
 COPY --from=builder /src/bin/bus ./bus
 
 EXPOSE 2021
