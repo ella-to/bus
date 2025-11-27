@@ -19,7 +19,7 @@ import (
 func DumpCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "dump",
-		Usage: "connectiong to the bus server and dumping all events",
+		Usage: "connecting to the bus server and dumping all events",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  "host",
