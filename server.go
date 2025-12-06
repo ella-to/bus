@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -118,8 +117,8 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("new consumer", "id", id, "subject", subject, "start", start, "ack", ack, "redelivery", redelivery, "redelivery_count", redeliveryCount)
-	defer slog.Info("consumer closed", "id", id)
+	logger.InfoContext(ctx, "new consumer", "id", id, "subject", subject, "start", start, "ack", ack, "redelivery", redelivery, "redelivery_count", redeliveryCount)
+	defer logger.InfoContext(ctx, "consumer closed", "id", id)
 
 	var startPos int64
 	switch start {
@@ -195,7 +194,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}).Await(ctx)
 			if setAckMapError != nil {
-				slog.Error("failed to set signal channel for acking message", "error", setAckMapError, "consumer_id", id, "event_id", event.Id)
+				logger.ErrorContext(ctx, "failed to set signal channel for acking message", "error", setAckMapError, "consumer_id", id, "event_id", event.Id)
 				_ = pusher.Push(newSseError(setAckMapError))
 				continue
 			}
@@ -215,14 +214,14 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 			// io.Copy
 			msg, err := newSseEvent(&event)
 			if err != nil {
-				slog.Warn("failed to create a sse message from event", "error", err, "event_id", event.Id, "consumer_id", id)
+				logger.WarnContext(ctx, "failed to create a sse message from event", "error", err, "event_id", event.Id, "consumer_id", id)
 				_ = pusher.Push(newSseError(err))
 				break
 			}
 
 			err = pusher.Push(msg)
 			if err != nil {
-				slog.Warn("failed to push sse message to consumer", "error", err, "event_id", event.Id, "consumer_id", id)
+				logger.WarnContext(ctx, "failed to push sse message to consumer", "error", err, "event_id", event.Id, "consumer_id", id)
 				h.runner.Submit(ctx, func(ctx context.Context) error {
 					delete(h.waitingAckMap, key)
 					return nil
@@ -240,7 +239,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 					return
 				case <-ch:
 					// ack received, the ch signal will be deleted by Ack function
-					slog.Debug("received acked", "consumer_id", id, "event_id", event.Id)
+					logger.DebugContext(ctx, "received acked", "consumer_id", id, "event_id", event.Id)
 					break
 				case <-time.After(redelivery):
 					redeliveryCountAttempted++
@@ -251,11 +250,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 					}).Await(ctx)
 
 					if redeliveryCoutnEnabled && redeliveryCountAttempted >= redeliveryCount {
-						slog.Warn("redelivery count exceeded, dropping event", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId)
+						logger.WarnContext(ctx, "redelivery count exceeded, dropping event", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId)
 						break
 					}
 
-					slog.Warn("redelivery", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId, "redelivery_attempt_count", redeliveryCountAttempted)
+					logger.WarnContext(ctx, "redelivery", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId, "redelivery_attempt_count", redeliveryCountAttempted)
 					continue
 				}
 			}
@@ -298,7 +297,7 @@ func (h *Handler) Ack(w http.ResponseWriter, r *http.Request) {
 	err := h.runner.Submit(ctx, func(ctx context.Context) error {
 		ack, ok := h.waitingAckMap[key]
 		if !ok {
-			slog.Warn("failed to find ack channel key", "consumer_id", consumerId, "event_id", eventId)
+			logger.WarnContext(ctx, "failed to find ack channel key", "consumer_id", consumerId, "event_id", eventId)
 			return nil
 		}
 

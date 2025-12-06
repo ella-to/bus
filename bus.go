@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +16,7 @@ import (
 
 var (
 	// these variables are set during build time
-	Version   = "v0.5.1"
+	Version   = "v0.5.2"
 	GitCommit = ""
 	// the following variables are used in the project
 	msgType   = "msg"
@@ -1097,4 +1098,10 @@ func (o *createdAtOpt) configurePut(opt *putOpt) error {
 // so it should be used with caution, if you are not sure about it, do not use it.
 func WithCreatedAt(createdAt time.Time) *createdAtOpt {
 	return &createdAtOpt{createdAt}
+}
+
+var logger = slog.Default()
+
+func SetLogger(l *slog.Logger) {
+	logger = l
 }
