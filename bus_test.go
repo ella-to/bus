@@ -32,7 +32,7 @@ func createBusServer(t *testing.T, eventLogsDir string) *bus.Client {
 		t.Fatal(err)
 	}
 
-	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)))
+	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)), nil)
 
 	server := httptest.NewServer(handler)
 
@@ -57,7 +57,7 @@ func createBusServerWithCompression(t *testing.T, eventLogsDir string) *bus.Clie
 		t.Fatal(err)
 	}
 
-	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)))
+	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)), nil)
 
 	server := httptest.NewServer(handler)
 
@@ -212,6 +212,28 @@ func TestPullClose(t *testing.T) {
 
 func TestEncodeDecodeEvent(t *testing.T) {
 	value := `{"id":"123","trace_id":"trace-123","subject":"a.b.c","response_subject":"a.b.c.response","created_at":"2025-01-18T06:55:35-05:00","payload":{"a": 1, "b": 2},"index":100}`
+
+	var event bus.Event
+
+	_, err := io.Copy(&event, strings.NewReader(value))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buffer bytes.Buffer
+
+	_, err = io.Copy(&buffer, &event)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if value != buffer.String() {
+		t.Fatalf("expected %s but got %s", value, buffer.String())
+	}
+}
+
+func TestEncodeDecodeKey(t *testing.T) {
+	value := `{"id":"123","trace_id":"trace-123","key":"idem-1","subject":"a.b.c","response_subject":"a.b.c.response","created_at":"2025-01-18T06:55:35-05:00","payload":{"a": 1, "b": 2},"index":100}`
 
 	var event bus.Event
 

@@ -31,6 +31,7 @@ var (
 type Event struct {
 	Id              string          `json:"id"`
 	TraceId         string          `json:"trace_id,omitempty"`
+	Key             string          `json:"key"`
 	Subject         string          `json:"subject"`
 	ResponseSubject string          `json:"response_subject,omitempty"`
 	Payload         json.RawMessage `json:"payload"`
@@ -154,9 +155,14 @@ func (e *Event) Read(p []byte) (n int, err error) {
 				e.writeState = 7
 			}
 
-		case 7: // Write "subject" field
+		case 7: // Write "key" field
 			{
-				field := []byte(`,"subject":"`)
+				if len(e.Key) == 0 {
+					e.writeState = 10 // skip key field
+					continue
+				}
+
+				field := []byte(`,"key":"`)
 				n1 := e.tc.Copy(p, field, 7)
 				n += n1
 				p = p[n1:]
@@ -167,19 +173,19 @@ func (e *Event) Read(p []byte) (n int, err error) {
 				e.writeState = 8
 			}
 
-		case 8: // Write Subject value
+		case 8: // Write Key value
 			{
-				n1 := e.tc.Copy(p, []byte(e.Subject), 8)
+				n1 := e.tc.Copy(p, []byte(e.Key), 8)
 				n += n1
 				p = p[n1:]
-				if n1 < len(e.Subject) {
+				if n1 < len(e.Key) {
 					return n, nil
 				}
 
 				e.writeState = 9
 			}
 
-		case 9: // close "subject" field
+		case 9: // close "key" field
 			{
 				n1 := e.tc.Copy(p, []byte(`"`), 9)
 				n += n1
@@ -191,14 +197,9 @@ func (e *Event) Read(p []byte) (n int, err error) {
 				e.writeState = 10
 			}
 
-		case 10: // Write "response_subject" field
+		case 10: // Write "subject" field
 			{
-				if len(e.ResponseSubject) == 0 {
-					e.writeState = 13 // skip response_subject field
-					continue
-				}
-
-				field := []byte(`,"response_subject":"`)
+				field := []byte(`,"subject":"`)
 				n1 := e.tc.Copy(p, field, 10)
 				n += n1
 				p = p[n1:]
@@ -209,19 +210,19 @@ func (e *Event) Read(p []byte) (n int, err error) {
 				e.writeState = 11
 			}
 
-		case 11: // Write ResponseSubject value
+		case 11: // Write Subject value
 			{
-				n1 := e.tc.Copy(p, []byte(e.ResponseSubject), 11)
+				n1 := e.tc.Copy(p, []byte(e.Subject), 11)
 				n += n1
 				p = p[n1:]
-				if n1 < len(e.ResponseSubject) {
+				if n1 < len(e.Subject) {
 					return n, nil
 				}
 
 				e.writeState = 12
 			}
 
-		case 12: // close "response_subject" field
+		case 12: // close "subject" field
 			{
 				n1 := e.tc.Copy(p, []byte(`"`), 12)
 				n += n1
@@ -233,9 +234,14 @@ func (e *Event) Read(p []byte) (n int, err error) {
 				e.writeState = 13
 			}
 
-		case 13: // Write "created_at" field
+		case 13: // Write "response_subject" field
 			{
-				field := []byte(`,"created_at":"`)
+				if len(e.ResponseSubject) == 0 {
+					e.writeState = 16 // skip response_subject field
+					continue
+				}
+
+				field := []byte(`,"response_subject":"`)
 				n1 := e.tc.Copy(p, field, 13)
 				n += n1
 				p = p[n1:]
@@ -246,20 +252,19 @@ func (e *Event) Read(p []byte) (n int, err error) {
 				e.writeState = 14
 			}
 
-		case 14: // Write CreatedAt value
+		case 14: // Write ResponseSubject value
 			{
-				createdAt := e.CreatedAt.Format(time.RFC3339)
-				n1 := e.tc.Copy(p, []byte(createdAt), 14)
+				n1 := e.tc.Copy(p, []byte(e.ResponseSubject), 14)
 				n += n1
 				p = p[n1:]
-				if n1 < len(createdAt) {
+				if n1 < len(e.ResponseSubject) {
 					return n, nil
 				}
 
 				e.writeState = 15
 			}
 
-		case 15: // close "created_at" field
+		case 15: // close "response_subject" field
 			{
 				n1 := e.tc.Copy(p, []byte(`"`), 15)
 				n += n1
@@ -271,14 +276,9 @@ func (e *Event) Read(p []byte) (n int, err error) {
 				e.writeState = 16
 			}
 
-		case 16: // Write "payload" field
+		case 16: // Write "created_at" field
 			{
-				if len(e.Payload) == 0 {
-					e.writeState = 18 // skip payload field
-					continue
-				}
-
-				field := []byte(`,"payload":`)
+				field := []byte(`,"created_at":"`)
 				n1 := e.tc.Copy(p, field, 16)
 				n += n1
 				p = p[n1:]
@@ -289,59 +289,102 @@ func (e *Event) Read(p []byte) (n int, err error) {
 				e.writeState = 17
 			}
 
-		case 17: // Write Payload value
+		case 17: // Write CreatedAt value
 			{
-				n1 := e.tc.Copy(p, e.Payload, 17)
+				createdAt := e.CreatedAt.Format(time.RFC3339)
+				n1 := e.tc.Copy(p, []byte(createdAt), 17)
 				n += n1
 				p = p[n1:]
-				if n1 < len(e.Payload) {
+				if n1 < len(createdAt) {
 					return n, nil
 				}
 
 				e.writeState = 18
 			}
 
-		case 18: // Write Index
+		case 18: // close "created_at" field
 			{
-				if e.Index == 0 {
-					e.writeState = 20 // skip index field
-					continue
-				}
-
-				field := []byte(`,"index":`)
-				n1 := e.tc.Copy(p, field, 18)
-				n += n1
-				p = p[n1:]
-				if n1 < len(field) {
-					return n, nil
-				}
-
-				e.writeState = 19
-			}
-
-		case 19: // Write Index value
-			{
-				index := strconv.FormatInt(e.Index, 10)
-				n1 := e.tc.Copy(p, []byte(index), 19)
-				n += n1
-				p = p[n1:]
-				if n1 < len(index) {
-					return n, nil
-				}
-
-				e.writeState = 20
-			}
-
-		case 20: // close
-			{
-				n1 := e.tc.Copy(p, []byte(`}`), 18)
+				n1 := e.tc.Copy(p, []byte(`"`), 18)
 				n += n1
 				p = p[n1:]
 				if n1 < 1 {
 					return n, nil
 				}
 
+				e.writeState = 19
+			}
+
+		case 19: // Write "payload" field
+			{
+				if len(e.Payload) == 0 {
+					e.writeState = 21 // skip payload field
+					continue
+				}
+
+				field := []byte(`,"payload":`)
+				n1 := e.tc.Copy(p, field, 19)
+				n += n1
+				p = p[n1:]
+				if n1 < len(field) {
+					return n, nil
+				}
+
+				e.writeState = 20
+			}
+
+		case 20: // Write Payload value
+			{
+				n1 := e.tc.Copy(p, e.Payload, 20)
+				n += n1
+				p = p[n1:]
+				if n1 < len(e.Payload) {
+					return n, nil
+				}
+
 				e.writeState = 21
+			}
+
+		case 21: // Write Index
+			{
+				if e.Index == 0 {
+					e.writeState = 23 // skip index field
+					continue
+				}
+
+				field := []byte(`,"index":`)
+				n1 := e.tc.Copy(p, field, 21)
+				n += n1
+				p = p[n1:]
+				if n1 < len(field) {
+					return n, nil
+				}
+
+				e.writeState = 22
+			}
+
+		case 22: // Write Index value
+			{
+				index := strconv.FormatInt(e.Index, 10)
+				n1 := e.tc.Copy(p, []byte(index), 22)
+				n += n1
+				p = p[n1:]
+				if n1 < len(index) {
+					return n, nil
+				}
+
+				e.writeState = 23
+			}
+
+		case 23: // close
+			{
+				n1 := e.tc.Copy(p, []byte(`}`), 23)
+				n += n1
+				p = p[n1:]
+				if n1 < 1 {
+					return n, nil
+				}
+
+				e.writeState = 24
 			}
 
 		default:
@@ -432,6 +475,14 @@ func (e *Event) Write(b []byte) (int, error) {
 				return 0, err
 			}
 			e.TraceId = val
+			pos += newPos
+
+		case "key":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			e.Key = val
 			pos += newPos
 
 		case "subject":
@@ -914,6 +965,17 @@ func WithRequestReply() PutOpt {
 		}
 
 		p.event.ResponseSubject = newInboxSubject()
+		return nil
+	})
+}
+
+func WithKey(key string) PutOpt {
+	return PutOptFunc(func(p *putOpt) error {
+		if p.event.Key != "" {
+			return errors.New("key already set")
+		}
+
+		p.event.Key = key
 		return nil
 	})
 }

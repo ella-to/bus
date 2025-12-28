@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"ella.to/bus/internal/cache"
 	"ella.to/immuta"
 	"ella.to/sse"
 	"ella.to/task"
@@ -31,11 +32,22 @@ const (
 	DefaultSsePingTimeout = 30 * time.Second
 )
 
+type DuplicateChecker interface {
+	CheckDuplicate(key string) bool
+}
+
+type DuplicateCheckerFunc func(key string) bool
+
+func (f DuplicateCheckerFunc) CheckDuplicate(key string) bool {
+	return f(key)
+}
+
 type Handler struct {
 	mux           *http.ServeMux
 	eventsLog     *immuta.Storage
 	waitingAckMap map[string]chan struct{} // {consumerId-eventId} -> ack
 	runner        task.Runner
+	dupChecker    DuplicateChecker
 }
 
 func (h *Handler) Close() error {
@@ -60,6 +72,13 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 	if err := event.validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	if h.dupChecker != nil {
+		if h.dupChecker.CheckDuplicate(event.Key) {
+			http.Error(w, "key was processed before", http.StatusConflict)
+			return
+		}
 	}
 
 	if event.Id == "" {
@@ -314,7 +333,7 @@ func (h *Handler) Ack(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func CreateHandler(logsDirPath string, namespaces []string, secretKey string, blockSize int) (*Handler, error) {
+func CreateHandler(logsDirPath string, namespaces []string, secretKey string, blockSize int, dupCacheSize int) (*Handler, error) {
 	{
 		// This block is used to validate the namespaces
 		// and make sure there is no reserved and duplicate namespaces
@@ -357,15 +376,30 @@ func CreateHandler(logsDirPath string, namespaces []string, secretKey string, bl
 
 	runner := task.NewRunner(task.WithWorkerSize(1))
 
-	return NewHandler(eventStorage, runner), nil
+	var dupChecker DuplicateChecker
+
+	if dupCacheSize > 0 {
+		dupChecker = func() DuplicateCheckerFunc {
+			lru := cache.NewLRU[string](dupCacheSize)
+			return func(key string) bool {
+				if key == "" {
+					return false
+				}
+				return !lru.Add(key)
+			}
+		}()
+	}
+
+	return NewHandler(eventStorage, runner, dupChecker), nil
 }
 
-func NewHandler(eventLogs *immuta.Storage, runner task.Runner) *Handler {
+func NewHandler(eventLogs *immuta.Storage, runner task.Runner, dupChecker DuplicateChecker) *Handler {
 	h := &Handler{
 		mux:           http.NewServeMux(),
 		eventsLog:     eventLogs,
 		runner:        runner,
 		waitingAckMap: make(map[string]chan struct{}),
+		dupChecker:    dupChecker,
 	}
 
 	// Wrap handlers with CORS middleware
@@ -398,20 +432,6 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 func handleOptions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func NewServer(addr string, logsDirPath string, namespaces []string, secretKey string, blockSize int) (*http.Server, error) {
-	handler, err := CreateHandler(logsDirPath, namespaces, secretKey, blockSize)
-	if err != nil {
-		return nil, err
-	}
-
-	server := &http.Server{
-		Addr:    addr,
-		Handler: handler,
-	}
-
-	return server, nil
 }
 
 //

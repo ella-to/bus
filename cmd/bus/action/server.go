@@ -58,6 +58,11 @@ func ServerCommand() *cli.Command {
 				Usage: `block size used to encrypt the events log files`,
 				Value: 4 * 1024,
 			},
+			&cli.IntFlag{
+				Name:  "dup-size",
+				Usage: `size of the duplicate checker cache (0 to disable)`,
+				Value: 1000,
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			logLevel := getLogLevel(getValue(os.Getenv("BUS_LOG_LEVEL"), "INFO"))
@@ -66,6 +71,7 @@ func ServerCommand() *cli.Command {
 			namespaces := getSliceValues(os.Getenv("BUS_NAMESPACES"), cmd.String("namespaces"), ",")
 			secretKey := getValue(os.Getenv("BUS_SECRET_KEY"), cmd.String("secret-key"))
 			blockSize := getIntValue(os.Getenv("BUS_BLOCK_SIZE"), cmd.Int("block-size"))
+			dupCacheSize := getIntValue(os.Getenv("BUS_DUP_SIZE"), cmd.Int("dup-size"))
 
 			if len(namespaces) == 0 {
 				return errors.New("no namespaces provided")
@@ -81,7 +87,7 @@ func ServerCommand() *cli.Command {
 				return err
 			}
 
-			handler, err := bus.CreateHandler(path, namespaces, secretKey, blockSize)
+			handler, err := bus.CreateHandler(path, namespaces, secretKey, blockSize, dupCacheSize)
 			if err != nil {
 				return err
 			}
