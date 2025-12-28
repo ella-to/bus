@@ -51,17 +51,17 @@ A lightweight, persistent message bus built for simplicity and performance. Perf
 
 **Go SDK:**
 ```bash
-go get ella.to/bus@v0.5.2
+go get ella.to/bus@v0.5.3
 ```
 
 **CLI:**
 ```bash
-go install ella.to/bus/cmd/bus@v0.5.2
+go install ella.to/bus/cmd/bus@v0.5.3
 ```
 
 **Docker:**
 ```bash
-docker pull ellato/bus:v0.5.2
+docker pull ellato/bus:v0.5.3
 ```
 
 ### 2. Start the Server
@@ -72,7 +72,7 @@ Using Docker Compose (recommended):
 cat > docker-compose.yml << 'EOF'
 services:
   bus:
-    image: ellato/bus:v0.5.2
+    image: ellato/bus:v0.5.3
     environment:
       - BUS_ADDR=0.0.0.0:2021
       - BUS_PATH=/storage/events.log
@@ -418,7 +418,7 @@ Bus is built on top of:
 ```yaml
 services:
   bus:
-    image: ellato/bus:v0.5.2
+    image: ellato/bus:v0.5.3
     restart: unless-stopped
     environment:
       - BUS_ADDR=0.0.0.0:2021
