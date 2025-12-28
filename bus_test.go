@@ -276,6 +276,83 @@ func TestEncodeDecodeEmptyEvent(t *testing.T) {
 	}
 }
 
+func TestDuplicateCheckerDropsDuplicate(t *testing.T) {
+	// Setup storage and handler with a DuplicateChecker that records seen keys
+	os.RemoveAll("TestDuplicateChecker")
+
+	storage, err := immuta.New(
+		immuta.WithLogsDirPath("TestDuplicateChecker"),
+		immuta.WithNamespaces("a"),
+		immuta.WithFastWrite(true),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seen := make(map[string]bool)
+	var m sync.Mutex
+	dup := bus.DuplicateCheckerFunc(func(key string) bool {
+		if key == "" {
+			return false
+		}
+		m.Lock()
+		defer m.Unlock()
+		if seen[key] {
+			return true
+		}
+		seen[key] = true
+		return false
+	})
+
+	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)), dup)
+	server := httptest.NewServer(handler)
+
+	t.Cleanup(func() {
+		storage.Close()
+		server.Close()
+		os.RemoveAll("TestDuplicateChecker")
+	})
+
+	client := bus.NewClient(server.URL)
+
+	// First put with key should succeed
+	first := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithKey("idem-1"), bus.WithData("hello"))
+	if first.Error() != nil {
+		t.Fatalf("first put failed: %v", first.Error())
+	}
+
+	// Second put with same key should be rejected
+	second := client.Put(context.Background(), bus.WithSubject("a.b.c"), bus.WithKey("idem-1"), bus.WithData("world"))
+	if second.Error() == nil {
+		t.Fatal("expected second put to fail with duplicate key, but it succeeded")
+	}
+	if !strings.Contains(second.Error().Error(), "key was processed before") {
+		t.Fatalf("expected duplicate error, got: %v", second.Error())
+	}
+
+	// Ensure only one event with that key exists in the stream
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	count := 0
+	for event, err := range client.Get(ctx, bus.WithSubject("a.b.c"), bus.WithAckStrategy(bus.AckNone), bus.WithStartFrom(bus.StartOldest)) {
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				break
+			}
+			t.Fatalf("failed to get event: %s", err)
+		}
+
+		if event.Key == "idem-1" {
+			count++
+		}
+	}
+
+	if count != 1 {
+		t.Fatalf("expected 1 event with key 'idem-1', got %d", count)
+	}
+}
+
 func BenchmarkEncodeEventUsingRead(b *testing.B) {
 	b.ReportAllocs()
 
