@@ -86,7 +86,7 @@ func DebugCommand() *cli.Command {
 					if err != nil {
 						return err
 					}
-					defer func() { _ = r.Done() }()
+					defer r.Done()
 
 					var event bus.Event
 

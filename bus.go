@@ -16,7 +16,7 @@ import (
 
 var (
 	// these variables are set during build time
-	Version   = "v0.5.3"
+	Version   = "v0.6.0"
 	GitCommit = ""
 	// the following variables are used in the project
 	msgType   = "msg"
@@ -46,6 +46,11 @@ type Event struct {
 	// Internal state for serialization
 	writeState int // Tracks which field we're writing
 	tc         trackCopy
+
+	// Internal buffer used to accumulate partial input across multiple Write
+	// calls. This allows the Write method to receive small chunks and
+	// complete parsing when enough data has been provided.
+	writeBuf []byte
 }
 
 // resetReadWriteState resets the internal state used for reading and writing.
@@ -395,192 +400,53 @@ func (e *Event) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
+// buffer for incremental writes
+// This buffer is used to accumulate partial input across multiple Write calls
+// so that writes with small chunks (e.g. when using io.MultiReader) can be
+// processed correctly.
+// NOTE: kept as a byte slice to keep the struct simple and avoid races if the
+// Event is reused concurrently (the tests call Write from one goroutine).
+// The buffer grows as needed and we slice off the consumed prefix after a
+// successful parse.
+//
+// It's unexported and only used by the Write method.
+//
+// Placed here since it conceptually belongs to Event's read/write state.
+
+// add the following field to Event struct near the top (we will append it right here)
+
+// (insertion point - we will replace the function body below)
+
 func (e *Event) Write(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, errors.New("empty input")
 	}
 
-	// Skip leading whitespace
-	pos := 0
-	for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
-		pos++
+	// Append incoming bytes to the internal buffer
+	e.writeBuf = append(e.writeBuf, b...) // accept the bytes and try to parse a full event
+
+	// Try to parse a single event from the buffered data. The parser will
+	// return io.ErrUnexpectedEOF when the buffer ends in the middle of a
+	// token (so we'll wait for more data). Any other error is considered a
+	// hard parse error and will be returned to the caller.
+	data := e.writeBuf
+	consumed, err := tryParseEvent(data, e)
+	if err == io.ErrUnexpectedEOF {
+		// Need more data; accept the bytes and wait for more
+		return len(b), nil
+	}
+	if err != nil {
+		// parsing error; don't keep the bad prefix
+		return 0, err
 	}
 
-	// Expect opening brace
-	if pos >= len(b) || b[pos] != '{' {
-		return 0, errors.New("expected opening brace")
+	// successful parse, remove the consumed bytes from the buffer
+	if consumed >= len(e.writeBuf) {
+		e.writeBuf = e.writeBuf[:0]
+	} else {
+		e.writeBuf = append([]byte(nil), e.writeBuf[consumed:]...)
 	}
-	pos++
-
-	for pos < len(b) {
-		// Skip whitespace
-		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
-			pos++
-		}
-
-		if pos >= len(b) {
-			return 0, errors.New("unexpected end of input")
-		}
-
-		// Check for closing brace
-		if b[pos] == '}' {
-			pos++
-			break
-		}
-
-		// Expect quote for field name
-		if b[pos] != '"' {
-			return 0, errors.New("expected quote before field name")
-		}
-		pos++
-
-		// Read field name
-		fieldStart := pos
-		for pos < len(b) && b[pos] != '"' {
-			pos++
-		}
-		if pos >= len(b) {
-			return 0, errors.New("unterminated field name")
-		}
-		fieldName := string(b[fieldStart:pos])
-		pos++ // Skip closing quote
-
-		// Skip whitespace and colon
-		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
-			pos++
-		}
-		if pos >= len(b) || b[pos] != ':' {
-			return 0, errors.New("expected colon after field name")
-		}
-		pos++
-
-		// Skip whitespace before value
-		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
-			pos++
-		}
-
-		// Parse value based on field name
-		switch fieldName {
-		case "id":
-			val, newPos, err := parseString(b[pos:])
-			if err != nil {
-				return 0, err
-			}
-			e.Id = val
-			pos += newPos
-
-		case "trace_id":
-			val, newPos, err := parseString(b[pos:])
-			if err != nil {
-				return 0, err
-			}
-			e.TraceId = val
-			pos += newPos
-
-		case "key":
-			val, newPos, err := parseString(b[pos:])
-			if err != nil {
-				return 0, err
-			}
-			e.Key = val
-			pos += newPos
-
-		case "subject":
-			val, newPos, err := parseString(b[pos:])
-			if err != nil {
-				return 0, err
-			}
-			e.Subject = val
-			pos += newPos
-
-		case "response_subject":
-			val, newPos, err := parseString(b[pos:])
-			if err != nil {
-				return 0, err
-			}
-			e.ResponseSubject = val
-			pos += newPos
-
-		case "created_at":
-			val, newPos, err := parseString(b[pos:])
-			if err != nil {
-				return 0, err
-			}
-			// Parse ISO 8601 timestamp
-			t, err := time.Parse(time.RFC3339, val)
-			if err != nil {
-				return 0, errors.New("invalid timestamp format")
-			}
-			e.CreatedAt = t
-			pos += newPos
-
-		case "payload":
-			if b[pos] == 'n' && pos+3 < len(b) && string(b[pos:pos+4]) == "null" {
-				e.Payload = nil
-				pos += 4
-			} else {
-				// Find the end of the JSON value (could be object, array, string, number, etc.)
-				depth := 0
-				dataStart := pos
-				inString := false
-				for pos < len(b) {
-					if !inString {
-						if b[pos] == '{' || b[pos] == '[' {
-							depth++
-						} else if b[pos] == '}' || b[pos] == ']' {
-							depth--
-							if depth < 0 {
-								break
-							}
-						} else if b[pos] == '"' {
-							inString = true
-						} else if b[pos] == ',' && depth == 0 {
-							break
-						}
-					} else {
-						switch b[pos] {
-						case '\\':
-							pos++
-						case '"':
-							inString = false
-						}
-					}
-					pos++
-				}
-				e.Payload = json.RawMessage(b[dataStart:pos])
-			}
-		case "index":
-			val, newPos, err := parseNumber(b[pos:])
-			if err != nil {
-				return 0, err
-			}
-
-			index, err := strconv.ParseInt(val, 10, 64)
-			if err != nil {
-				return 0, err
-			}
-
-			e.Index = index
-			pos += newPos
-		}
-
-		// Skip whitespace
-		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
-			pos++
-		}
-
-		// Check for comma or closing brace
-		if pos >= len(b) {
-			return 0, errors.New("unexpected end of input")
-		}
-		if b[pos] == ',' {
-			pos++
-		} else if b[pos] != '}' {
-			return 0, errors.New("expected comma or closing brace")
-		}
-	}
-
-	return pos, nil
+	return len(b), nil
 }
 
 // Helper function to parse a JSON number
@@ -604,6 +470,9 @@ func parseNumber(b []byte) (string, int, error) {
 
 	if pos < len(b) && b[pos] == '.' {
 		pos++
+		if pos >= len(b) {
+			return "", 0, io.ErrUnexpectedEOF
+		}
 		for pos < len(b) && b[pos] >= '0' && b[pos] <= '9' {
 			pos++
 		}
@@ -614,7 +483,10 @@ func parseNumber(b []byte) (string, int, error) {
 		if pos < len(b) && (b[pos] == '+' || b[pos] == '-') {
 			pos++
 		}
-		if pos >= len(b) || (b[pos] < '0' || b[pos] > '9') {
+		if pos >= len(b) {
+			return "", 0, io.ErrUnexpectedEOF
+		}
+		if b[pos] < '0' || b[pos] > '9' {
 			return "", 0, errors.New("expected number")
 		}
 
@@ -639,7 +511,7 @@ func parseString(b []byte) (string, int, error) {
 		switch b[pos] {
 		case '\\':
 			if pos+1 >= len(b) {
-				return "", 0, errors.New("incomplete escape sequence")
+				return "", 0, io.ErrUnexpectedEOF
 			}
 			pos++
 			switch b[pos] {
@@ -665,7 +537,310 @@ func parseString(b []byte) (string, int, error) {
 		}
 		pos++
 	}
-	return "", 0, errors.New("unterminated string")
+	return "", 0, io.ErrUnexpectedEOF
+}
+
+// tryParseEvent attempts to parse a single JSON event from the provided
+// buffer. If the buffer contains a complete event, it fills the provided
+// target Event fields and returns the number of bytes consumed.
+// If the buffer ends while parsing, it returns io.ErrUnexpectedEOF. Any
+// other parse error is returned directly.
+func tryParseEvent(b []byte, out *Event) (int, error) {
+	pos := 0
+	// Skip leading whitespace
+	for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+		pos++
+	}
+
+	if pos >= len(b) {
+		return 0, io.ErrUnexpectedEOF
+	}
+
+	if b[pos] != '{' {
+		return 0, errors.New("expected opening brace")
+	}
+	pos++
+
+	// temp event to only commit on successful parse
+	var te Event
+
+	for pos < len(b) {
+		// Skip whitespace
+		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+			pos++
+		}
+
+		if pos >= len(b) {
+			return 0, io.ErrUnexpectedEOF
+		}
+
+		if b[pos] == '}' {
+			pos++
+			// commit parsed fields
+			out.Id = te.Id
+			out.TraceId = te.TraceId
+			out.Key = te.Key
+			out.Subject = te.Subject
+			out.ResponseSubject = te.ResponseSubject
+			out.Payload = te.Payload
+			out.CreatedAt = te.CreatedAt
+			out.Index = te.Index
+			return pos, nil
+		}
+
+		if b[pos] != '"' {
+			return 0, errors.New("expected quote before field name")
+		}
+		pos++
+
+		// Read field name
+		fieldStart := pos
+		for pos < len(b) && b[pos] != '"' {
+			pos++
+		}
+		if pos >= len(b) {
+			return 0, io.ErrUnexpectedEOF
+		}
+		fieldName := string(b[fieldStart:pos])
+		pos++ // skip closing quote
+
+		// Skip whitespace and colon
+		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+			pos++
+		}
+		if pos >= len(b) {
+			return 0, io.ErrUnexpectedEOF
+		}
+		if b[pos] != ':' {
+			return 0, errors.New("expected colon after field name")
+		}
+		pos++
+
+		// Skip whitespace before value
+		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+			pos++
+		}
+		if pos >= len(b) {
+			return 0, io.ErrUnexpectedEOF
+		}
+
+		switch fieldName {
+		case "id":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			te.Id = val
+			pos += newPos
+
+		case "trace_id":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			te.TraceId = val
+			pos += newPos
+
+		case "key":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			te.Key = val
+			pos += newPos
+
+		case "subject":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			te.Subject = val
+			pos += newPos
+
+		case "response_subject":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			te.ResponseSubject = val
+			pos += newPos
+
+		case "created_at":
+			val, newPos, err := parseString(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			// Parse ISO 8601 timestamp
+			t, err := time.Parse(time.RFC3339, val)
+			if err != nil {
+				return 0, errors.New("invalid timestamp format")
+			}
+			te.CreatedAt = t
+			pos += newPos
+
+		case "payload":
+			if b[pos] == 'n' {
+				// possible null
+				if pos+3 >= len(b) {
+					return 0, io.ErrUnexpectedEOF
+				}
+				if string(b[pos:pos+4]) == "null" {
+					te.Payload = nil
+					pos += 4
+					break
+				}
+			}
+
+			// Find end of JSON value
+			depth := 0
+			dataStart := pos
+			inString := false
+			for pos < len(b) {
+				if !inString {
+					if b[pos] == '{' || b[pos] == '[' {
+						depth++
+					} else if b[pos] == '}' || b[pos] == ']' {
+						depth--
+						if depth < 0 {
+							break
+						}
+					} else if b[pos] == '"' {
+						inString = true
+					} else if b[pos] == ',' && depth == 0 {
+						break
+					}
+				} else {
+					switch b[pos] {
+					case '\\':
+						pos++
+					case '"':
+						inString = false
+					}
+				}
+				pos++
+			}
+			if pos > len(b) {
+				return 0, io.ErrUnexpectedEOF
+			}
+			if pos == len(b) && (depth != 0 || inString) {
+				return 0, io.ErrUnexpectedEOF
+			}
+			te.Payload = json.RawMessage(b[dataStart:pos])
+
+		case "index":
+			val, newPos, err := parseNumber(b[pos:])
+			if err != nil {
+				return 0, err
+			}
+			index, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return 0, err
+			}
+			te.Index = index
+			pos += newPos
+		default:
+			// Unknown fields: attempt to skip a JSON value (string, number, object, array, literal)
+			// For simplicity, reuse the payload logic to skip the value
+			// but do not store it.
+			if b[pos] == '"' {
+				_, newPos, err := parseString(b[pos:])
+				if err != nil {
+					return 0, err
+				}
+				pos += newPos
+			} else if (b[pos] >= '0' && b[pos] <= '9') || b[pos] == '-' {
+				_, newPos, err := parseNumber(b[pos:])
+				if err != nil {
+					return 0, err
+				}
+				pos += newPos
+			} else if b[pos] == '{' || b[pos] == '[' {
+				// use same scanning as payload
+				depth := 0
+				inString := false
+				for pos < len(b) {
+					if !inString {
+						if b[pos] == '{' || b[pos] == '[' {
+							depth++
+						} else if b[pos] == '}' || b[pos] == ']' {
+							depth--
+							if depth < 0 {
+								break
+							}
+						} else if b[pos] == '"' {
+							inString = true
+						} else if b[pos] == ',' && depth == 0 {
+							break
+						}
+					} else {
+						switch b[pos] {
+						case '\\':
+							pos++
+						case '"':
+							inString = false
+						}
+					}
+					pos++
+				}
+				if pos == len(b) && inString {
+					return 0, io.ErrUnexpectedEOF
+				}
+			} else if b[pos] == 'n' {
+				// null
+				if pos+3 >= len(b) {
+					return 0, io.ErrUnexpectedEOF
+				}
+				if string(b[pos:pos+4]) == "null" {
+					pos += 4
+				} else {
+					return 0, errors.New("invalid token")
+				}
+			} else if b[pos] == 't' || b[pos] == 'f' {
+				// true/false
+				end := pos
+				for end < len(b) && ((b[end] >= 'a' && b[end] <= 'z') || (b[end] >= 'A' && b[end] <= 'Z')) {
+					end++
+				}
+				if end == len(b) {
+					return 0, io.ErrUnexpectedEOF
+				}
+				pos = end
+			} else {
+				return 0, errors.New("unexpected token")
+			}
+		}
+
+		// Skip whitespace
+		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+			pos++
+		}
+
+		if pos >= len(b) {
+			return 0, io.ErrUnexpectedEOF
+		}
+
+		// Check for comma or closing brace
+		if b[pos] == ',' {
+			pos++
+			continue
+		} else if b[pos] == '}' {
+			pos++
+			// commit parsed fields
+			out.Id = te.Id
+			out.TraceId = te.TraceId
+			out.Key = te.Key
+			out.Subject = te.Subject
+			out.ResponseSubject = te.ResponseSubject
+			out.Payload = te.Payload
+			out.CreatedAt = te.CreatedAt
+			out.Index = te.Index
+			return pos, nil
+		} else {
+			return 0, errors.New("expected comma or closing brace")
+		}
+	}
+
+	return 0, io.ErrUnexpectedEOF
 }
 
 func (e *Event) validate() error {
@@ -774,6 +949,10 @@ func (r *Response) Error() error {
 type putOpt struct {
 	event        Event
 	confirmCount int
+
+	// batch support
+	batch    []Event
+	hasBatch bool
 }
 
 type PutOpt interface {
@@ -976,6 +1155,42 @@ func WithKey(key string) PutOpt {
 		}
 
 		p.event.Key = key
+		return nil
+	})
+}
+
+// Batch allows publishing multiple events in a single Put call. Each Batch call
+// defines one event using only WithSubject, WithKey and WithData. When using
+// batch mode, the Put call must contain only Batch items (mixing with other
+// top-level options is disallowed).
+func Batch(opts ...PutOpt) PutOpt {
+	return PutOptFunc(func(p *putOpt) error {
+		// mark that we are in batch mode
+		p.hasBatch = true
+
+		// Apply provided opts to a temporary putOpt to validate what they try to set
+		temp := &putOpt{}
+		for _, o := range opts {
+			if err := o.configurePut(temp); err != nil {
+				return err
+			}
+		}
+
+		// Only allow subject, key and payload to be set inside a batch item
+		if temp.event.ResponseSubject != "" || temp.confirmCount != 0 {
+			return errors.New("batch only supports WithSubject, WithKey, WithTraceId, WithId and WithData options")
+		}
+
+		if temp.event.Subject == "" {
+			return errors.New("batch item must have a subject")
+		}
+
+		if temp.event.Payload == nil {
+			return errors.New("batch item must have data")
+		}
+
+		// append the validated event
+		p.batch = append(p.batch, temp.event)
 		return nil
 	})
 }

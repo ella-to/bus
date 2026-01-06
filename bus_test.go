@@ -291,7 +291,7 @@ func TestDuplicateCheckerDropsDuplicate(t *testing.T) {
 
 	seen := make(map[string]bool)
 	var m sync.Mutex
-	dup := bus.DuplicateCheckerFunc(func(key string) bool {
+	dup := bus.DuplicateCheckerFunc(func(key string, subject string) bool {
 		if key == "" {
 			return false
 		}
@@ -514,6 +514,126 @@ func TestBusWithS2Compression_MultipleEvents(t *testing.T) {
 
 	if receivedCount != eventCount {
 		t.Fatalf("expected %d events but got %d", eventCount, receivedCount)
+	}
+}
+
+func TestBatchPutPublishesAll(t *testing.T) {
+	client := createBusServer(t, "TestBatchPutPublishesAll")
+
+	resp := client.Put(context.Background(),
+		bus.Batch(bus.WithSubject("a.b.c"), bus.WithData("one")),
+		bus.Batch(bus.WithSubject("a.b.c"), bus.WithData("two")),
+	)
+	if resp.Error() != nil {
+		t.Fatal(resp.Error())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var got []string
+	for event, err := range client.Get(ctx, bus.WithSubject("a.b.c"), bus.WithAckStrategy(bus.AckNone), bus.WithStartFrom(bus.StartOldest)) {
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				break
+			}
+			t.Fatalf("failed to get event: %s", err)
+		}
+
+		var s string
+		err = json.Unmarshal(event.Payload, &s)
+		if err != nil {
+			t.Fatalf("failed to unmarshal payload: %s", err)
+		}
+		got = append(got, s)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(got))
+	}
+
+	if got[0] != "one" || got[1] != "two" {
+		t.Fatalf("unexpected payloads: %v", got)
+	}
+}
+
+func TestBatchCannotMixWithOtherOptions(t *testing.T) {
+	client := createBusServer(t, "TestBatchCannotMixWithOtherOptions")
+
+	resp := client.Put(context.Background(),
+		bus.Batch(bus.WithSubject("a.b.c"), bus.WithData("one")),
+		bus.WithSubject("a.b.c"),
+	)
+	if resp.Error() == nil {
+		t.Fatal("expected error when mixing batch with other options")
+	}
+}
+
+func TestBatchRejectsUnsupportedOptions(t *testing.T) {
+	client := createBusServer(t, "TestBatchRejectsUnsupportedOptions")
+
+	resp := client.Put(context.Background(),
+		bus.Batch(bus.WithSubject("a.b.c"), bus.WithConfirm(1), bus.WithData("one")),
+	)
+	if resp.Error() == nil {
+		t.Fatal("expected error when using unsupported option inside batch")
+	}
+}
+
+func TestBatchDuplicateKeyRejected(t *testing.T) {
+	// create server with duplicate checker that rejects key "bad"
+	os.RemoveAll("TestBatchDuplicateKeyRejected")
+
+	storage, err := immuta.New(
+		immuta.WithLogsDirPath("TestBatchDuplicateKeyRejected"),
+		immuta.WithNamespaces("a"),
+		immuta.WithFastWrite(true),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dup := bus.DuplicateCheckerFunc(func(key string, subject string) bool {
+		return key == "bad"
+	})
+
+	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)), dup)
+	server := httptest.NewServer(handler)
+
+	t.Cleanup(func() {
+		storage.Close()
+		server.Close()
+		os.RemoveAll("TestBatchDuplicateKeyRejected")
+	})
+
+	client := bus.NewClient(server.URL)
+
+	resp := client.Put(context.Background(),
+		bus.Batch(bus.WithSubject("a.b.c"), bus.WithKey("bad"), bus.WithData("one")),
+		bus.Batch(bus.WithSubject("a.b.c"), bus.WithKey("ok"), bus.WithData("two")),
+	)
+	if resp.Error() == nil {
+		t.Fatal("expected error when duplicate key present in batch")
+	}
+
+	// ensure no events were committed
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	count := 0
+	for event, err := range client.Get(ctx, bus.WithSubject("a.b.c"), bus.WithAckStrategy(bus.AckNone), bus.WithStartFrom(bus.StartOldest)) {
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				break
+			}
+			t.Fatalf("failed to get event: %s", err)
+		}
+		_ = event
+		count++
+	}
+
+	if count != 0 {
+		t.Fatalf("expected 0 events, got %d", count)
 	}
 }
 
@@ -1153,4 +1273,41 @@ func TestRedeliveryCountDrop(t *testing.T) {
 
 	// Verify no more redeliveries occur
 	time.Sleep(1 * time.Second)
+}
+
+func TestEncodeDecodeEvent2(t *testing.T) {
+	example := `{
+  "id": "",
+  "subject": "a.b.c",
+  "created_at": "0001-01-01T00:00:00Z",
+  "payload": {
+    "events": [
+      { "timestamp": "2025-01-01T12:00:00Z", "type": "login" },
+      {
+        "amount": 99.99,
+        "timestamp": "2025-01-01T13:00:00Z",
+        "type": "purchase"
+      },
+      { "timestamp": "2025-01-01T14:00:00Z", "type": "logout" }
+    ],
+    "tags": ["customer", "premium", "verified"],
+    "user": {
+      "email": "john@example.com",
+      "id": 123,
+      "metadata": {
+        "age": 30,
+        "city": "New York",
+        "preferences": ["coding", "reading", "hiking"]
+      },
+      "name": "John Doe"
+    }
+  }
+}`
+
+	var event bus.Event
+
+	_, err := io.Copy(&event, strings.NewReader(example))
+	if err != nil {
+		t.Fatalf("failed to decode event: %s", err)
+	}
 }

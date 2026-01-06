@@ -1,7 +1,9 @@
 package bus
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ella.to/bus/internal/cache"
@@ -33,13 +36,13 @@ const (
 )
 
 type DuplicateChecker interface {
-	CheckDuplicate(key string) bool
+	CheckDuplicate(key string, subject string) bool
 }
 
-type DuplicateCheckerFunc func(key string) bool
+type DuplicateCheckerFunc func(key string, subject string) bool
 
-func (f DuplicateCheckerFunc) CheckDuplicate(key string) bool {
-	return f(key)
+func (f DuplicateCheckerFunc) CheckDuplicate(key string, subject string) bool {
+	return f(key, subject)
 }
 
 type Handler struct {
@@ -58,12 +61,118 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
+// Put handles incoming events - delegates to putBatch or putSingle based on content
 func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
+	// Read the entire body
+	body, err := io.ReadAll(io.LimitReader(r.Body, 10))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	if len(trimmed) == 0 {
+		http.Error(w, "empty body", http.StatusBadRequest)
+		return
+	}
+
+	// Set body for handlers to use
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(trimmed), r.Body))
+
+	if trimmed[0] == '[' {
+		h.putBatch(w, r)
+	} else {
+		h.putSingle(w, r)
+	}
+}
+
+// putBatch handles batch event submissions (JSON array of events)
+func (h *Handler) putBatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// decode the request body to event
-	var event Event
+	var events []Event
+	if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
+	if len(events) == 0 {
+		http.Error(w, "empty batch", http.StatusBadRequest)
+		return
+	}
+
+	var groupNamespace string
+
+	// Validate and initialize all events
+	for i := range events {
+		e := &events[i]
+
+		if err := e.validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if e.ResponseSubject != "" {
+			http.Error(w, "batch items must not have response subject", http.StatusBadRequest)
+			return
+		}
+
+		if h.dupChecker != nil && h.dupChecker.CheckDuplicate(e.Key, e.Subject) {
+			http.Error(w, "key was processed before", http.StatusConflict)
+			return
+		}
+
+		if e.Id == "" {
+			e.Id = newEventId()
+		}
+
+		if e.CreatedAt.IsZero() {
+			e.CreatedAt = time.Now()
+		}
+
+		namespace := extractNamespace(events[i].Subject)
+		if namespace == "" {
+			http.Error(w, "invalid subject: missing namespace", http.StatusBadRequest)
+		}
+
+		if groupNamespace == "" {
+			groupNamespace = namespace
+		} else if groupNamespace != namespace {
+			http.Error(w, "all events in batch must belong to the same namespace", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Append all events atomically
+	err := h.runner.Submit(ctx, func(ctx context.Context) error {
+		for i := range events {
+			_, _, err := h.eventsLog.Append(ctx, groupNamespace, &events[i])
+			if err != nil {
+				return err
+			}
+			// commit the append as previously done by Append's internal defer
+			h.eventsLog.Save(groupNamespace, &err)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}).Await(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// putSingle handles single event submissions
+func (h *Handler) putSingle(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var event Event
 	if _, err := io.Copy(&event, r.Body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -74,11 +183,9 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.dupChecker != nil {
-		if h.dupChecker.CheckDuplicate(event.Key) {
-			http.Error(w, "key was processed before", http.StatusConflict)
-			return
-		}
+	if h.dupChecker != nil && h.dupChecker.CheckDuplicate(event.Key, event.Subject) {
+		http.Error(w, "key was processed before", http.StatusConflict)
+		return
 	}
 
 	if event.Id == "" {
@@ -89,17 +196,21 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 		event.CreatedAt = time.Now()
 	}
 
+	namespace := extractNamespace(event.Subject)
+	if namespace == "" {
+		http.Error(w, "invalid subject: missing namespace", http.StatusBadRequest)
+		return
+	}
+
 	var eventIndex int64
-
-	namespaceIdx := strings.Index(event.Subject, ".")
-
 	err := h.runner.Submit(ctx, func(ctx context.Context) (err error) {
-		eventIndex, _, err = h.eventsLog.Append(ctx, event.Subject[:namespaceIdx], &event)
+		eventIndex, _, err = h.eventsLog.Append(ctx, namespace, &event)
 		if err != nil {
 			return err
 		}
-
-		return nil
+		// commit the append
+		h.eventsLog.Save(namespace, &err)
+		return err
 	}).Await(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -109,8 +220,15 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(HeaderEventId, event.Id)
 	w.Header().Set(HeaderEventCreatedAt, event.CreatedAt.Format(time.RFC3339Nano))
 	w.Header().Set(HeaderEventIndex, fmt.Sprintf("%d", eventIndex))
-
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// extractNamespace extracts the namespace from a subject (everything before the first dot)
+func extractNamespace(subject string) string {
+	if before, _, ok := strings.Cut(subject, "."); ok {
+		return before
+	}
+	return ""
 }
 
 // GET /?subject=a.b.*&start=oldest&ack=manual&redelivery=5s&redelivery_count=3
@@ -182,7 +300,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 		var event Event
 		_, err = io.Copy(&event, r)
-		_ = r.Done()
+		r.Done()
 		if err != nil {
 			_ = pusher.Push(newSseError(err))
 			continue
@@ -333,7 +451,7 @@ func (h *Handler) Ack(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func CreateHandler(logsDirPath string, namespaces []string, secretKey string, blockSize int, dupCacheSize int) (*Handler, error) {
+func CreateHandler(logsDirPath string, namespaces []string, secretKey string, blockSize int, dupChecker DuplicateChecker) (*Handler, error) {
 	{
 		// This block is used to validate the namespaces
 		// and make sure there is no reserved and duplicate namespaces
@@ -376,21 +494,30 @@ func CreateHandler(logsDirPath string, namespaces []string, secretKey string, bl
 
 	runner := task.NewRunner(task.WithWorkerSize(1))
 
-	var dupChecker DuplicateChecker
+	return NewHandler(eventStorage, runner, dupChecker), nil
+}
 
-	if dupCacheSize > 0 {
-		dupChecker = func() DuplicateCheckerFunc {
-			lru := cache.NewLRU[string](dupCacheSize)
-			return func(key string) bool {
-				if key == "" {
-					return false
-				}
-				return !lru.Add(key)
-			}
-		}()
+func DefaultDuplicateChecker(size int) DuplicateChecker {
+	var mtx sync.Mutex
+
+	cacheSubjects := make(map[string]*cache.LRU[string])
+
+	getCache := func(subject string) *cache.LRU[string] {
+		mtx.Lock()
+		defer mtx.Unlock()
+
+		lru, ok := cacheSubjects[subject]
+		if !ok {
+			lru = cache.NewLRU[string](size)
+			cacheSubjects[subject] = lru
+		}
+
+		return lru
 	}
 
-	return NewHandler(eventStorage, runner, dupChecker), nil
+	return DuplicateCheckerFunc(func(key string, subject string) bool {
+		return getCache(subject).Add(key)
+	})
 }
 
 func NewHandler(eventLogs *immuta.Storage, runner task.Runner, dupChecker DuplicateChecker) *Handler {

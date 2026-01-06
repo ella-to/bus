@@ -87,7 +87,12 @@ func ServerCommand() *cli.Command {
 				return err
 			}
 
-			handler, err := bus.CreateHandler(path, namespaces, secretKey, blockSize, dupCacheSize)
+			var dupChecker bus.DuplicateChecker
+			if dupCacheSize <= 0 {
+				dupChecker = bus.DefaultDuplicateChecker(dupCacheSize)
+			}
+
+			handler, err := bus.CreateHandler(path, namespaces, secretKey, blockSize, dupChecker)
 			if err != nil {
 				return err
 			}

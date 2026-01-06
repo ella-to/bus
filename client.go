@@ -1,7 +1,9 @@
 package bus
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +35,44 @@ func (c *Client) Put(ctx context.Context, opts ...PutOpt) *Response {
 			return &Response{err: err}
 		}
 	}
+
+	// If batch mode is enabled, ensure there are no other top-level options set
+	if opt.hasBatch {
+		// disallow mixing batch with other options
+		if opt.event.Subject != "" || opt.event.Key != "" || opt.event.ResponseSubject != "" || opt.event.TraceId != "" || opt.event.Id != "" || !opt.event.CreatedAt.IsZero() || opt.confirmCount != 0 {
+			return &Response{err: errors.New("cannot mix batch with other options")}
+		}
+
+		if len(opt.batch) == 0 {
+			return &Response{err: errors.New("batch has no items")}
+		}
+
+		body, err := json.Marshal(opt.batch)
+		if err != nil {
+			return &Response{err: err}
+		}
+
+		url := c.host + "/"
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return &Response{err: err}
+		}
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return &Response{err: err}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusAccepted {
+			return &Response{err: newReaderError(resp.Body)}
+		}
+
+		// Success for batch: don't expose single event headers
+		return &Response{}
+	}
+
+	// single event path (unchanged)
 
 	url := c.host + "/"
 

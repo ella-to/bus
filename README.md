@@ -51,17 +51,17 @@ A lightweight, persistent message bus built for simplicity and performance. Perf
 
 **Go SDK:**
 ```bash
-go get ella.to/bus@v0.5.3
+go get ella.to/bus@v0.6.0
 ```
 
 **CLI:**
 ```bash
-go install ella.to/bus/cmd/bus@v0.5.3
+go install ella.to/bus/cmd/bus@v0.6.0
 ```
 
 **Docker:**
 ```bash
-docker pull ellato/bus:v0.5.3
+docker pull ellato/bus:v0.6.0
 ```
 
 ### 2. Start the Server
@@ -72,7 +72,7 @@ Using Docker Compose (recommended):
 cat > docker-compose.yml << 'EOF'
 services:
   bus:
-    image: ellato/bus:v0.5.3
+    image: ellato/bus:v0.6.0
     environment:
       - BUS_ADDR=0.0.0.0:2021
       - BUS_PATH=/storage/events.log
@@ -168,6 +168,29 @@ for event, err := range client.Get(ctx,
     // Acknowledge to prevent redelivery
     event.Ack(ctx)
 }
+```
+
+### Batch Publishing 🧩
+
+Bus supports batching multiple events in a single `Put` call using the `Batch` option. Each `Batch(...)` call defines one event; provide one or more `Batch` items to `client.Put` to publish them atomically.
+
+Rules:
+
+- All events in a batch **must belong to the same namespace** (the first segment of the subject). The server will reject batches that mix namespaces.
+- Batch items may only set subject, key, trace id, id and data. Other options (for example confirmations, response subjects for request/reply, or delivery options) are not allowed inside a batch.
+- You cannot mix batch mode with other top-level `Put` options in the same call.
+
+Example:
+
+```go
+resp := client.Put(ctx,
+    bus.Batch(bus.WithSubject("orders.created"), bus.WithData(map[string]string{"id":"1"})),
+    bus.Batch(bus.WithSubject("orders.created"), bus.WithData(map[string]string{"id":"2"})),
+)
+if resp.Error() != nil {
+    panic(resp.Error())
+}
+fmt.Println("Batch published")
 ```
 
 ### Request/Reply Pattern
@@ -418,7 +441,7 @@ Bus is built on top of:
 ```yaml
 services:
   bus:
-    image: ellato/bus:v0.5.3
+    image: ellato/bus:v0.6.0
     restart: unless-stopped
     environment:
       - BUS_ADDR=0.0.0.0:2021
