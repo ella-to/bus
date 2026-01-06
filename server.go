@@ -36,6 +36,8 @@ const (
 )
 
 type DuplicateChecker interface {
+	// CheckDuplicate checks if the given key for the subject was already processed.
+	// It returns true if the key was already present, false otherwise.
 	CheckDuplicate(key string, subject string) bool
 }
 
@@ -516,7 +518,10 @@ func DefaultDuplicateChecker(size int) DuplicateChecker {
 	}
 
 	return DuplicateCheckerFunc(func(key string, subject string) bool {
-		return getCache(subject).Add(key)
+		if key == "" {
+			return false
+		}
+		return !getCache(subject).Add(key)
 	})
 }
 

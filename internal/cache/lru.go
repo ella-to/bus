@@ -20,6 +20,8 @@ func NewLRU[K comparable](capacity int) *LRU[K] {
 	}
 }
 
+// Add adds a key to the LRU cache.
+// It returns true if the key was not already present, false otherwise.
 func (l *LRU[K]) Add(key K) bool {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
