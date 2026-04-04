@@ -40,6 +40,7 @@ A lightweight, persistent message bus built for simplicity and performance. Perf
 | 🔐 **Encryption** | Optional at-rest encryption with NaCl |
 | 🔁 **Redelivery** | Automatic retry for unacknowledged messages |
 | ✅ **Confirmations** | Wait for N consumers to acknowledge |
+| 🚫 **Duplicate Prevention** | Optional LRU cache with TTL to prevent duplicate events |
 | 🌐 **SSE Streaming** | Real-time events via Server-Sent Events |
 | 🛠️ **CLI Tools** | Debug, dump, restore, and manage events |
 
@@ -267,6 +268,8 @@ err := client.Put(ctx,
 | `BUS_NAMESPACES` | Comma-separated namespace list | *required* |
 | `BUS_SECRET_KEY` | Encryption key (enables encryption) | *disabled* |
 | `BUS_BLOCK_SIZE` | Encryption block size | `4096` |
+| `BUS_DUP_SIZE` | Duplicate cache size (0 to disable) | `1000` |
+| `BUS_DUP_TTL` | Duplicate cache TTL duration | `0` (no TTL) |
 | `BUS_LOG_LEVEL` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR` | `INFO` |
 
 ### Namespaces
@@ -296,6 +299,28 @@ bus server --namespaces orders,users,notifications,analytics
 | `orders.created` | Exact match only | `orders.created` |
 | `orders.*` | Single segment wildcard | `orders.created`, `orders.updated` |
 | `orders.>` | Multi-segment wildcard | `orders.created`, `orders.item.added` |
+
+### Duplicate Checking
+
+Bus can prevent duplicate events using an LRU cache with optional TTL:
+
+```bash
+# Enable duplicate checking (size 1000, no TTL)
+bus server --namespaces app --dup-size 1000
+
+# With TTL (5 minutes)
+bus server --namespaces app --dup-size 1000 --dup-ttl 5m
+```
+
+**How it works:**
+- Events with the same `key` and `subject` are considered duplicates
+- The cache uses LRU eviction when the size limit is reached
+- TTL expires cache entries automatically (per item, not whole cache)
+- Set `dup-size` to `0` to disable (default)
+
+**Environment variables:**
+- `BUS_DUP_SIZE`: Cache size (0 to disable)
+- `BUS_DUP_TTL`: TTL duration (e.g., "5m", "1h")
 
 ---
 
@@ -332,6 +357,9 @@ bus server --addr :2021 --path ./data --namespaces app,orders
 
 # With encryption
 bus server --namespaces app --secret-key "my-key"
+
+# With duplicate checking (size 1000, TTL 5 minutes)
+bus server --namespaces app --dup-size 1000 --dup-ttl 5m
 ```
 
 ### Publish Events

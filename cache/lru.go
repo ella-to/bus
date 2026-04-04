@@ -3,18 +3,26 @@ package cache
 import (
 	"container/list"
 	"sync"
+	"time"
 )
+
+type entry[K comparable] struct {
+	key   K
+	added time.Time
+}
 
 type LRU[K comparable] struct {
 	capacity int
+	ttl      time.Duration
 	cache    map[K]*list.Element
 	list     *list.List
 	mtx      sync.Mutex
 }
 
-func NewLRU[K comparable](capacity int) *LRU[K] {
+func NewLRU[K comparable](capacity int, ttl time.Duration) *LRU[K] {
 	return &LRU[K]{
 		capacity: capacity,
+		ttl:      ttl,
 		cache:    make(map[K]*list.Element),
 		list:     list.New(),
 	}
@@ -27,19 +35,27 @@ func (l *LRU[K]) Add(key K) bool {
 	defer l.mtx.Unlock()
 
 	if elem, ok := l.cache[key]; ok {
-		l.list.MoveToFront(elem)
-		return false
+		e := elem.Value.(entry[K])
+		if l.ttl > 0 && time.Since(e.added) > l.ttl {
+			// expired, remove it
+			l.list.Remove(elem)
+			delete(l.cache, key)
+		} else {
+			l.list.MoveToFront(elem)
+			return false
+		}
 	}
 
 	if l.list.Len() >= l.capacity {
 		back := l.list.Back()
 		if back != nil {
+			e := back.Value.(entry[K])
 			l.list.Remove(back)
-			delete(l.cache, back.Value.(K))
+			delete(l.cache, e.key)
 		}
 	}
 
-	elem := l.list.PushFront(key)
+	elem := l.list.PushFront(entry[K]{key: key, added: time.Now()})
 	l.cache[key] = elem
 
 	return true

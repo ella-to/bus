@@ -63,6 +63,11 @@ func ServerCommand() *cli.Command {
 				Usage: `size of the duplicate checker cache (0 to disable)`,
 				Value: 1000,
 			},
+			&cli.DurationFlag{
+				Name:  "dup-ttl",
+				Usage: `TTL for duplicate checker cache items (0 for no TTL)`,
+				Value: 0,
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			logLevel := getLogLevel(getValue(os.Getenv("BUS_LOG_LEVEL"), "INFO"))
@@ -72,6 +77,7 @@ func ServerCommand() *cli.Command {
 			secretKey := getValue(os.Getenv("BUS_SECRET_KEY"), cmd.String("secret-key"))
 			blockSize := getIntValue(os.Getenv("BUS_BLOCK_SIZE"), cmd.Int("block-size"))
 			dupCacheSize := getIntValue(os.Getenv("BUS_DUP_SIZE"), cmd.Int("dup-size"))
+			dupCacheTTL := getDurationValue(os.Getenv("BUS_DUP_TTL"), cmd.Duration("dup-ttl"))
 
 			if len(namespaces) == 0 {
 				return errors.New("no namespaces provided")
@@ -88,8 +94,8 @@ func ServerCommand() *cli.Command {
 			}
 
 			var dupChecker bus.DuplicateChecker
-			if dupCacheSize <= 0 {
-				dupChecker = bus.DefaultDuplicateChecker(dupCacheSize)
+			if dupCacheSize > 0 {
+				dupChecker = bus.DefaultDuplicateChecker(dupCacheSize, dupCacheTTL)
 			}
 
 			handler, err := bus.CreateHandler(path, namespaces, secretKey, blockSize, dupChecker)
@@ -109,20 +115,20 @@ func ServerCommand() *cli.Command {
 			// Goroutine to start the server
 			go func() {
 				fmt.Printf(logo, bus.Version, bus.GitCommit)
-				slog.Info("server started", "address", addr, "namespaces", namespaces, "events_log_file", path, "log_level", logLevel.String())
+				slog.InfoContext(ctx, "server started", "address", addr, "namespaces", namespaces, "events_log_file", path, "log_level", logLevel.String())
 
 				if listenErr := server.ListenAndServe(); listenErr != nil && !errors.Is(err, http.ErrServerClosed) {
-					slog.Error("failed to start server", "error", err)
+					slog.ErrorContext(ctx, "failed to start server", "error", err)
 				}
 			}()
 
 			// Wait for interrupt signal (Ctrl+C)
 			<-stop
-			slog.Info("Shutting down server...")
+			slog.InfoContext(ctx, "Shutting down server...")
 
 			// closes all the streams and causes all connected clients to disconnect
 			if err = handler.Close(); err != nil {
-				slog.Error("failed to close handler", "error", err)
+				slog.ErrorContext(ctx, "failed to close handler", "error", err)
 			}
 
 			// Create a context with a timeout for the shutdown
@@ -178,6 +184,19 @@ func getIntValue(value string, defaultValue int) int {
 	}
 
 	return int(v)
+}
+
+func getDurationValue(value string, defaultValue time.Duration) time.Duration {
+	if value == "" {
+		return defaultValue
+	}
+
+	v, err := time.ParseDuration(value)
+	if err != nil {
+		return defaultValue
+	}
+
+	return v
 }
 
 func getLogLevel(value string) slog.Level {

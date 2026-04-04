@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"ella.to/sse"
@@ -164,22 +165,13 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 	qs.Set("redelivery", opt.redelivery.String())
 	addr.RawQuery = qs.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, addr.String(), nil)
+	var consumerId string
+	httpReceiver, err := sse.CreateHttpReceiver(addr.String(), sse.WithHttpReceiverRespHeader(func(header http.Header) {
+		consumerId = header.Get(HeaderConsumerId)
+	}))
 	if err != nil {
 		return newIterError(err)
 	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return newIterError(err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		return newIterError(newReaderError(resp.Body))
-	}
-
-	consumerId := resp.Header.Get(HeaderConsumerId)
 
 	// call the meta function if it's set
 	// this is useful if the golang client wants to get access to the consumer id
@@ -192,9 +184,18 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 
 	ctx, cancel := context.WithCancel(ctx)
 
-	incomings := sse.NewReceiver(resp.Body)
-
 	return func(yield func(*Event, error) bool) {
+		stop := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = httpReceiver.Close()
+			case <-stop:
+			}
+		}()
+
+		defer close(stop)
+		defer func() { _ = httpReceiver.Close() }()
 		defer cancel()
 
 		event := Event{
@@ -204,11 +205,15 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 		}
 
 		for {
-			msg, err := incomings.Receive(ctx)
+			msg, err := httpReceiver.Receive()
 			if err != nil {
+				if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
+					err = ctx.Err()
+				}
 				if !yield(nil, err) {
 					return
 				}
+				continue
 			}
 
 			switch msg.Event {
@@ -296,7 +301,7 @@ func newReaderError(r io.Reader) error {
 		return err
 	}
 
-	return errors.New(string(msg))
+	return errors.New(strings.TrimSpace(string(msg)))
 }
 
 func newIterError(err error) iter.Seq2[*Event, error] {

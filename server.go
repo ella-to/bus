@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"ella.to/bus/internal/cache"
+	"ella.to/bus/cache"
 	"ella.to/immuta"
 	"ella.to/sse"
 	"ella.to/task"
@@ -282,7 +282,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set(HeaderConsumerId, id)
 
-	pusher, err := sse.NewPusher(w, DefaultSsePingTimeout)
+	pusher, err := sse.CreateHttpPusher(w, sse.WithHttpPusherPingDuration(DefaultSsePingTimeout))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -499,7 +499,7 @@ func CreateHandler(logsDirPath string, namespaces []string, secretKey string, bl
 	return NewHandler(eventStorage, runner, dupChecker), nil
 }
 
-func DefaultDuplicateChecker(size int) DuplicateChecker {
+func DefaultDuplicateChecker(size int, ttl time.Duration) DuplicateChecker {
 	var mtx sync.Mutex
 
 	cacheSubjects := make(map[string]*cache.LRU[string])
@@ -510,7 +510,7 @@ func DefaultDuplicateChecker(size int) DuplicateChecker {
 
 		lru, ok := cacheSubjects[subject]
 		if !ok {
-			lru = cache.NewLRU[string](size)
+			lru = cache.NewLRU[string](size, ttl)
 			cacheSubjects[subject] = lru
 		}
 

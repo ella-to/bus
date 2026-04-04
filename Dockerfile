@@ -1,7 +1,7 @@
 ###############################################################################
 ### build stage 
 ###############################################################################
-FROM golang:1.25-alpine3.22 AS builder
+FROM golang:1.26-alpine3.22 AS builder
 
 ## INSTALL DEPENDENCIES
 RUN apk add --update --no-cache curl git make musl-dev gcc bash

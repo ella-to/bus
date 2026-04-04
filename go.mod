@@ -1,6 +1,6 @@
 module ella.to/bus
 
-go 1.25.0
+go 1.26.0
 
 require (
 	ella.to/crypto v0.0.1
@@ -14,6 +14,6 @@ require (
 require (
 	ella.to/hash v0.0.1 // indirect
 	ella.to/solid v0.1.0 // indirect
-	golang.org/x/crypto v0.45.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/crypto v0.48.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 )
