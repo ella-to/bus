@@ -1,6 +1,6 @@
 services:
   bus:
-    image: ellato/bus:latest
+    image: ellato/bus:v0.6.2
 
     environment:
       - BUS_LOG_LEVEL=INFO
