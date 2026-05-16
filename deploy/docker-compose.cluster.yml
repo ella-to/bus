@@ -1,0 +1,86 @@
+# 3-node NATS JetStream cluster for the ella.to/bus NATS engine.
+#
+# This is the recommended topology for any production deployment that needs
+# HA: streams created with replicas=3 will survive a single node loss.
+#
+# Usage:
+#   cd deploy
+#   docker compose -f docker-compose.cluster.yml up -d
+#   # Connect any client to one (or several) of:
+#   #   nats://127.0.0.1:4222
+#   #   nats://127.0.0.1:4223
+#   #   nats://127.0.0.1:4224
+#
+# To make new streams replicated by default, configure the bus.Client with:
+#   bus.WithDefaultStreamConfig(jetstream.StreamConfig{Replicas: 3})
+#
+# Or pass it per-namespace via:
+#   bus.WithStreamConfigurer(func(_ string, cfg *jetstream.StreamConfig) {
+#       cfg.Replicas = 3
+#   })
+
+x-nats-common: &nats-common
+  image: ${NATS_IMAGE:-nats:2.10-alpine}
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+    interval: 10s
+    timeout: 3s
+    retries: 5
+    start_period: 5s
+
+services:
+  nats-1:
+    <<: *nats-common
+    container_name: bus-nats-1
+    command: ["-c", "/etc/nats/nats.conf"]
+    ports:
+      - "${NATS_NODE1_CLIENT_PORT:-4222}:4222"
+      - "${NATS_NODE1_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - ./cluster/nats-1.conf:/etc/nats/nats.conf:ro
+      - nats1-data:/data
+
+  nats-2:
+    <<: *nats-common
+    container_name: bus-nats-2
+    command: ["-c", "/etc/nats/nats.conf"]
+    ports:
+      - "${NATS_NODE2_CLIENT_PORT:-4223}:4222"
+      - "${NATS_NODE2_MONITOR_PORT:-8223}:8222"
+    volumes:
+      - ./cluster/nats-2.conf:/etc/nats/nats.conf:ro
+      - nats2-data:/data
+
+  nats-3:
+    <<: *nats-common
+    container_name: bus-nats-3
+    command: ["-c", "/etc/nats/nats.conf"]
+    ports:
+      - "${NATS_NODE3_CLIENT_PORT:-4224}:4222"
+      - "${NATS_NODE3_MONITOR_PORT:-8224}:8222"
+    volumes:
+      - ./cluster/nats-3.conf:/etc/nats/nats.conf:ro
+      - nats3-data:/data
+
+  natsbox:
+    image: ${NATS_BOX_IMAGE:-natsio/nats-box:latest}
+    profiles: ["tools"]
+    depends_on:
+      nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
+    environment:
+      NATS_URL: nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222
+    entrypoint: ["sh", "-lc"]
+    command: ["nats --help && exec sh"]
+    tty: true
+    stdin_open: true
+
+volumes:
+  nats1-data:
+  nats2-data:
+  nats3-data:

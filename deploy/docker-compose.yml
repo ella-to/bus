@@ -1,0 +1,58 @@
+# Single-node NATS server with JetStream enabled — the standard backing
+# engine for the ella.to/bus NATS implementation.
+#
+# Usage:
+#   cd deploy
+#   docker compose up -d
+#   # Point your client at nats://127.0.0.1:4222
+#
+#   # Tail logs
+#   docker compose logs -f nats
+#
+#   # Drop into the nats CLI (nats-box is optional, started via the
+#   # `tools` profile so it doesn't run by default).
+#   docker compose --profile tools run --rm natsbox nats stream ls
+#
+# Environment overrides (set in a .env file or your shell):
+#   NATS_IMAGE         -> nats image, default nats:2.10-alpine
+#   NATS_CLIENT_PORT   -> host port for client connections, default 4222
+#   NATS_MONITOR_PORT  -> host port for the HTTP monitoring endpoint, default 8222
+#   NATS_DATA_DIR      -> host path for JetStream storage, default ./data
+
+services:
+  nats:
+    image: ${NATS_IMAGE:-nats:2.10-alpine}
+    container_name: bus-nats
+    restart: unless-stopped
+    command:
+      - "-c"
+      - "/etc/nats/nats.conf"
+    ports:
+      - "${NATS_CLIENT_PORT:-4222}:4222"   # client protocol
+      - "${NATS_MONITOR_PORT:-8222}:8222"  # HTTP monitoring
+    volumes:
+      - ./nats.conf:/etc/nats/nats.conf:ro
+      - ${NATS_DATA_DIR:-./data}:/data
+    healthcheck:
+      # /healthz returns 200 when the server is up and JetStream is healthy.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Optional toolbox for poking around the running server with the `nats`
+  # CLI. Started on-demand via the `tools` profile, e.g.
+  #   docker compose --profile tools run --rm natsbox nats stream ls
+  natsbox:
+    image: ${NATS_BOX_IMAGE:-natsio/nats-box:latest}
+    profiles: ["tools"]
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      NATS_URL: nats://nats:4222
+    entrypoint: ["sh", "-lc"]
+    command: ["nats --help && exec sh"]
+    tty: true
+    stdin_open: true
