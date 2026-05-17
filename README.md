@@ -118,7 +118,7 @@ is a non-JSON string.
 | Option                              | Notes                                                            |
 | ----------------------------------- | ---------------------------------------------------------------- |
 | `WithSubject(subject)`              | Required. May contain `*` and `>` wildcards.                     |
-| `WithStartFrom(StartOldest/Newest)` | Where to start reading from. Event-id form is best-effort.       |
+| `WithStartFrom(StartOldest/Newest/"e_id")` | Where to start reading. The `"e_id"` form starts *after* that event. |
 | `WithAckStrategy(AckManual/AckNone)`| Manual ack uses JetStream `AckExplicit`; none uses `AckNone`.    |
 | `WithDelivery(d, n)`                | AckWait + MaxDeliver. `n <= 0` means redeliver indefinitely.     |
 | `WithExtractMeta(fn)`               | Receives `{"consumer-id": "c_..."}` once the consumer is set up. |
@@ -165,10 +165,9 @@ defaults (`FileStorage`, `LimitsPolicy`) can be customised via
 
 ```go
 srv, err := bus.NewDevServer(
-    bus.WithDevServerMemStore(),               // optional: in-memory storage
     bus.WithDevServerHost("127.0.0.1"),        // default
     bus.WithDevServerPort(-1),                 // -1 = random free port
-    bus.WithDevServerStoreDir("/tmp/store"),   // override file storage path
+    bus.WithDevServerStoreDir("/tmp/store"),   // pin the JetStream store dir
 )
 defer srv.Shutdown()
 
@@ -218,14 +217,17 @@ TLS / auth pointers and more.
 go test ./...
 ```
 
-The test suite uses `bus.NewDevServer(bus.WithDevServerMemStore())` so it has
-no on-disk side effects and runs in a few seconds.
+The test suite uses `bus.NewDevServer()`, which boots a real NATS server with
+JetStream enabled in a freshly-allocated temp directory. The directory is
+removed automatically on `Shutdown()`, so each test gets fully isolated state
+without any global pollution.
 
 ## Limitations vs upstream
 
-- **`WithStartFrom("e_<id>")`** is currently best-effort: it falls back to
-  delivering all messages. Use `StartOldest` / `StartNewest` for strict
-  positioning, or supply a numeric sequence via `WithStreamConfigurer`.
+- **`WithStartFrom("e_<id>")`** is implemented by asking JetStream to deliver
+  every message in the stream and skipping on the client side until the
+  boundary event is seen — so positioning is exact, but the cost grows with
+  the size of the stream. Prefer `StartOldest` / `StartNewest` when you can.
 - **`Client.Ack(ctx, consumerId, eventId)`** is a no-op (see Acker section).
 - **At-rest encryption** and **duplicate cache TTL** are not implemented in
   this engine — configure JetStream's own encryption / `AllowDirect` /

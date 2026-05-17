@@ -565,16 +565,22 @@ func (c *Client) getJetStream(ctx context.Context, opt *getOpt, consumerId strin
 		InactiveThreshold: 5 * time.Minute,
 	}
 
+	// startAfterId, when non-empty, tells the receive loop below to drop
+	// every message up to and including the one with that Bus-Event-Id
+	// header. Subsequent messages are yielded as usual. This matches the
+	// upstream ella.to/bus semantics for WithStartFrom("e_xxx").
+	var startAfterId string
 	switch opt.start {
 	case StartOldest:
 		cfg.DeliverPolicy = jetstream.DeliverAllPolicy
 	case StartNewest:
 		cfg.DeliverPolicy = jetstream.DeliverNewPolicy
 	default:
-		// "e_xxx" event id form is best-effort: we currently fall back
-		// to "all" so the consumer at least receives history. Callers
-		// that need strict positioning should use a numeric sequence.
+		// "e_xxx" event id form: ask JetStream to deliver everything
+		// from the beginning and skip on the client side until we find
+		// the boundary event.
 		cfg.DeliverPolicy = jetstream.DeliverAllPolicy
+		startAfterId = opt.start
 	}
 
 	switch opt.ackStrategy {
@@ -641,6 +647,21 @@ func (c *Client) getJetStream(ctx context.Context, opt *getOpt, consumerId strin
 				}
 				continue
 			}
+
+			if startAfterId != "" {
+				// Pre-position phase: drop everything up to and
+				// including the boundary message, ack-skipping
+				// each one for explicit-ack consumers so they
+				// don't get redelivered while we scan.
+				if cfg.AckPolicy == jetstream.AckExplicitPolicy {
+					_ = m.Ack()
+				}
+				if m.Headers().Get(headerEventId) == startAfterId {
+					startAfterId = ""
+				}
+				continue
+			}
+
 			ev := eventFromJsMsg(m, c, consumerId)
 			if !yield(ev, nil) {
 				return

@@ -9,6 +9,10 @@ require (
 )
 
 require (
+	ella.to/crypto v0.0.3 // indirect
+	ella.to/hash v0.0.2 // indirect
+	ella.to/immuta v0.2.3 // indirect
+	ella.to/solid v0.1.2 // indirect
 	github.com/antithesishq/antithesis-sdk-go v0.7.0-default-no-op // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect

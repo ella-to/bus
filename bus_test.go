@@ -3,8 +3,10 @@ package bus_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,7 +22,7 @@ import (
 func newTestClient(t *testing.T) (*bus.Client, func()) {
 	t.Helper()
 
-	srv, err := bus.NewDevServer(bus.WithDevServerMemStore())
+	srv, err := bus.NewDevServer()
 	if err != nil {
 		t.Fatalf("dev server: %v", err)
 	}
@@ -390,6 +392,97 @@ func TestRedeliveryOnMissingAck(t *testing.T) {
 	}
 	if atomic.LoadInt32(&deliveries) < 2 {
 		t.Fatalf("expected at least 2 deliveries, got %d", deliveries)
+	}
+}
+
+// TestStartFromEventId publishes 3 events, asks a fresh listener to start
+// from the second event's id, and asserts that only the third event is
+// delivered (the boundary event itself is treated as already-seen, just
+// like upstream ella.to/bus).
+func TestStartFromEventId(t *testing.T) {
+	client, cleanup := newTestClient(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	count := 10000
+
+	publishedIds := make([]string, 0, count)
+	for i := 1; i <= count; i++ {
+		resp := client.Put(ctx,
+			bus.WithSubject("topic.events"),
+			bus.WithData(map[string]int{"n": i}),
+		)
+		if err := resp.Error(); err != nil {
+			t.Fatalf("put #%d: %v", i, err)
+		}
+		if resp.Id == "" {
+			t.Fatalf("put #%d: empty id", i)
+		}
+		publishedIds = append(publishedIds, resp.Id)
+	}
+
+	oneLastId := publishedIds[count-2]
+	lastId := publishedIds[count-1]
+	t.Logf("ids: %v -> starting after %s", publishedIds, oneLastId)
+
+	subCtx, subCancel := context.WithCancel(ctx)
+	defer subCancel()
+
+	type received struct {
+		id      string
+		payload string
+	}
+	var (
+		got []received
+		mu  sync.Mutex
+	)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev, err := range client.Get(subCtx,
+			bus.WithSubject("topic.events"),
+			bus.WithStartFrom(oneLastId),
+			bus.WithAckStrategy(bus.AckManual),
+		) {
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				t.Errorf("get: %v", err)
+				return
+			}
+			mu.Lock()
+			got = append(got, received{id: ev.Id, payload: string(ev.Payload)})
+			mu.Unlock()
+			if err := ev.Ack(subCtx); err != nil {
+				t.Errorf("ack: %v", err)
+			}
+			// Cancel after the first delivery so the iterator exits
+			// cleanly and we can assert on what we collected.
+			subCancel()
+			return
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for delivery")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 event, got %d (%+v)", len(got), got)
+	}
+	if got[0].id != lastId {
+		t.Fatalf("expected third event id %s, got %s", lastId, got[0].id)
+	}
+	if got[0].payload != `{"n":`+strconv.Itoa(count)+`}` {
+		t.Fatalf("expected payload {\"n\":%d}, got %s", count, got[0].payload)
 	}
 }
 

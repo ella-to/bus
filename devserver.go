@@ -12,17 +12,15 @@ import (
 // DevServer is an embedded NATS server with JetStream enabled. It is meant
 // for tests and local development — never for production.
 type DevServer struct {
-	srv         *natsserver.Server
-	storeDir    string
-	cleanupDir  bool
-	wasMemStore bool
+	srv        *natsserver.Server
+	storeDir   string
+	cleanupDir bool
 }
 
 type devServerOpts struct {
 	host     string
 	port     int
 	storeDir string
-	memStore bool
 	logger   natsserver.Logger
 	debug    bool
 	trace    bool
@@ -44,15 +42,10 @@ func WithDevServerPort(port int) DevServerOption {
 }
 
 // WithDevServerStoreDir uses dir as JetStream's storage location instead of
-// a temporary directory. The caller becomes responsible for cleaning it up.
+// a freshly-allocated temporary directory. The caller becomes responsible
+// for cleaning it up.
 func WithDevServerStoreDir(dir string) DevServerOption {
 	return func(o *devServerOpts) { o.storeDir = dir }
-}
-
-// WithDevServerMemStore makes JetStream use in-memory storage. Useful for
-// tests that want zero on-disk side effects.
-func WithDevServerMemStore() DevServerOption {
-	return func(o *devServerOpts) { o.memStore = true }
 }
 
 // WithDevServerLogger installs a custom logger on the embedded server. By
@@ -82,9 +75,14 @@ func NewDevServer(opts ...DevServerOption) (*DevServer, error) {
 		o(cfg)
 	}
 
+	// Always allocate a fresh temp dir when the caller hasn't pinned one
+	// down. Leaving StoreDir blank causes nats-server to fall back to a
+	// global default (e.g. $TMPDIR/jetstream) which persists across runs
+	// — that's a foot-gun for tests because earlier events end up
+	// polluting later runs.
 	storeDir := cfg.storeDir
 	cleanupDir := false
-	if storeDir == "" && !cfg.memStore {
+	if storeDir == "" {
 		dir, err := os.MkdirTemp("", "bus-nats-")
 		if err != nil {
 			return nil, fmt.Errorf("create store dir: %w", err)
@@ -130,10 +128,9 @@ func NewDevServer(opts ...DevServerOption) (*DevServer, error) {
 	}
 
 	return &DevServer{
-		srv:         srv,
-		storeDir:    storeDir,
-		cleanupDir:  cleanupDir,
-		wasMemStore: cfg.memStore,
+		srv:        srv,
+		storeDir:   storeDir,
+		cleanupDir: cleanupDir,
 	}, nil
 }
 
@@ -143,13 +140,8 @@ func (d *DevServer) ClientURL() string { return d.srv.ClientURL() }
 // Server exposes the underlying nats-server for advanced inspection.
 func (d *DevServer) Server() *natsserver.Server { return d.srv }
 
-// StoreDir returns the JetStream storage directory (empty when in-memory).
-func (d *DevServer) StoreDir() string {
-	if d.wasMemStore {
-		return ""
-	}
-	return d.storeDir
-}
+// StoreDir returns the JetStream storage directory.
+func (d *DevServer) StoreDir() string { return d.storeDir }
 
 // Shutdown stops the embedded server, waits for it to fully close, and
 // removes its temporary store directory when one was auto-created.

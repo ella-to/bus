@@ -1,3 +1,11 @@
+ella.to/crypto v0.0.3 h1:H8/w0wNcWJnrp2vJ1pL4gZ6VWhKg06mDeuzXbmuJhl4=
+ella.to/crypto v0.0.3/go.mod h1:MveKe6C6YI8zIQaOV4bYf4lKBI++fvMm+5FmJtHfxF0=
+ella.to/hash v0.0.2 h1:6lB2nkBoVJZUW0JgKO27QwWsXEf4Svk1Sd+JRXk0O9U=
+ella.to/hash v0.0.2/go.mod h1:kDzN+UUewE+0d3PWrkC2etFVlxi/04eDEjxiRPTI/Ms=
+ella.to/immuta v0.2.3 h1:rP0YzKL1DnyRe3nez3+X/1OIMYrUiHseM+dhbk5aVt8=
+ella.to/immuta v0.2.3/go.mod h1:2l093OvvGuoV+94HAG50wNyvJVbB9JTG+rb/uHE0m2U=
+ella.to/solid v0.1.2 h1:W9236ELh4RrNSUv8jP3GJ3wbG6OEHSb07lsH3c5kIQ4=
+ella.to/solid v0.1.2/go.mod h1:CNjZUukDvr9DdBXEO2ZuSnKehvQG6rfKGCUG7cPZAGo=
 github.com/antithesishq/antithesis-sdk-go v0.7.0-default-no-op h1:Z/MZK75wC/NSrkgqeNIa7jexam9uWzhLmFTSCPI/kn0=
 github.com/antithesishq/antithesis-sdk-go v0.7.0-default-no-op/go.mod h1:FQyySiasQQM8735Ddel3MRojmy4dA1IqCeyJ5jmPMbI=
 github.com/google/go-tpm v0.9.8 h1:slArAR9Ft+1ybZu0lBwpSmpwhRXaa85hWtMinMyRAWo=
