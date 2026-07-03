@@ -73,11 +73,27 @@ func (c *Client) Put(ctx context.Context, opts ...PutOpt) *Response {
 		return &Response{}
 	}
 
-	// single event path (unchanged)
+	// single event path
 
-	url := c.host + "/"
+	// When a reply is expected, the subscription to the response subject
+	// must be established BEFORE the event is published: response subjects
+	// are ephemeral inbox subjects routed in memory by the server, so a
+	// reply sent before the requester is connected would be lost.
+	var replies iter.Seq2[*Event, error]
+	if opt.event.ResponseSubject != "" {
+		replyCtx, cancelReplies := context.WithCancel(ctx)
+		defer cancelReplies()
 
-	req, err := http.NewRequest(http.MethodPost, url, &opt.event)
+		replies = c.Get(
+			replyCtx,
+			WithSubject(opt.event.ResponseSubject),
+			WithAckStrategy(AckNone),
+		)
+	}
+
+	body := opt.event.appendJSON(nil)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/", bytes.NewReader(body))
 	if err != nil {
 		return &Response{err: err}
 	}
@@ -108,18 +124,13 @@ func (c *Client) Put(ctx context.Context, opts ...PutOpt) *Response {
 		Index:     index,
 	}
 
-	if opt.event.ResponseSubject == "" {
+	if replies == nil {
 		return response
 	}
 
 	waitingForConfirm := opt.confirmCount > 0
 
-	for event, err := range c.Get(
-		ctx,
-		WithSubject(opt.event.ResponseSubject),
-		WithStartFrom(StartOldest),
-		WithAckStrategy(AckNone),
-	) {
+	for event, err := range replies {
 		if err != nil {
 			response.err = err
 			return response
@@ -153,18 +164,20 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 		return newIterError(err)
 	}
 
-	autoAck := opt.ackStrategy == "auto"
-	if autoAck {
-		opt.ackStrategy = AckManual
-	}
-
 	qs := url.Values{}
 	qs.Set("subject", opt.subject)
 	qs.Set("start", opt.start)
 	qs.Set("ack", opt.ackStrategy)
 	qs.Set("redelivery", opt.redelivery.String())
+	if opt.redeliverySet {
+		qs.Set("redelivery_count", strconv.Itoa(opt.redeliveryCount))
+	}
 	addr.RawQuery = qs.Encode()
 
+	// NOTE: the receiver reconnects transparently and the server assigns a
+	// new consumer id on every (re)connection, so the id has to be re-read
+	// from the response headers each time. The callback runs synchronously
+	// inside Receive, so no locking is needed.
 	var consumerId string
 	httpReceiver, err := sse.CreateHttpReceiver(addr.String(), sse.WithHttpReceiverRespHeader(func(header http.Header) {
 		consumerId = header.Get(HeaderConsumerId)
@@ -199,9 +212,8 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 		defer cancel()
 
 		event := Event{
-			acker:      c,
-			putter:     c,
-			consumerId: consumerId,
+			acker:  c,
+			putter: c,
 		}
 
 		for {
@@ -230,16 +242,13 @@ func (c *Client) Get(ctx context.Context, opts ...GetOpt) iter.Seq2[*Event, erro
 					continue
 				}
 
+				// re-read on every event: a transparent reconnect may have
+				// changed the consumer id, and acks must target the current
+				// server-side consumer
+				event.consumerId = consumerId
+
 				if !yield(&event, nil) {
 					return
-				}
-
-				if autoAck {
-					if err := event.Ack(ctx); err != nil {
-						if !yield(nil, err) {
-							return
-						}
-					}
 				}
 
 			case errorType:
@@ -289,8 +298,15 @@ func (c *Client) Ack(ctx context.Context, consumerId string, eventId string) err
 }
 
 func NewClient(host string) *Client {
+	// the default transport keeps only 2 idle connections per host, which
+	// forces most connections of a concurrent publisher through TIME_WAIT
+	// and exhausts ephemeral ports under load
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 0
+	transport.MaxIdleConnsPerHost = 256
+
 	return &Client{
-		http: &http.Client{},
+		http: &http.Client{Transport: transport},
 		host: host,
 	}
 }

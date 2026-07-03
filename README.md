@@ -52,17 +52,17 @@ A lightweight, persistent message bus built for simplicity and performance. Perf
 
 **Go SDK:**
 ```bash
-go get ella.to/bus@v0.6.3
+go get ella.to/bus@v0.6.4
 ```
 
 **CLI:**
 ```bash
-go install ella.to/bus/cmd/bus@v0.6.3
+go install ella.to/bus/cmd/bus@v0.6.4
 ```
 
 **Docker:**
 ```bash
-docker pull ellato/bus:v0.6.3
+docker pull ellato/bus:v0.6.4
 ```
 
 ### 2. Start the Server
@@ -73,7 +73,7 @@ Using Docker Compose (recommended):
 cat > docker-compose.yml << 'EOF'
 services:
   bus:
-    image: ellato/bus:v0.6.3
+    image: ellato/bus:v0.6.4
     environment:
       - BUS_ADDR=0.0.0.0:2021
       - BUS_PATH=/storage/events.log
@@ -284,8 +284,8 @@ subject: "orders.created"
 
 **Rules:**
 - All namespaces must be declared at server startup
-- `_bus_` is reserved for internal operations
-- Events in different namespaces have independent ordering
+- `_bus_` is reserved for internal request/reply inbox subjects; events published to it are routed in memory to connected consumers and are not persisted
+- Events in different namespaces have independent ordering and append in parallel
 
 ```bash
 # Start with multiple namespaces
@@ -444,9 +444,12 @@ events.addEventListener('msg', (e) => {
 Bus is built on top of:
 
 - **[immuta](https://ella.to/immuta)** - Append-only log storage
-- **[task](https://ella.to/task)** - Task runner for concurrent operations
-- **[solid](https://ella.to/solid)** - Signal/broadcast primitives
 - **[sse](https://ella.to/sse)** - Server-Sent Events implementation
+
+Request/reply and confirm flows use ephemeral inbox subjects (`_bus_.*`)
+which are routed in memory to connected consumers and never touch the
+events log: replies are only meaningful to a live requester, and keeping
+them out of storage means request/reply latency does not grow with history.
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -469,7 +472,7 @@ Bus is built on top of:
 ```yaml
 services:
   bus:
-    image: ellato/bus:v0.6.3
+    image: ellato/bus:v0.6.4
     restart: unless-stopped
     environment:
       - BUS_ADDR=0.0.0.0:2021

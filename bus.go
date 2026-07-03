@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 var (
@@ -43,9 +45,11 @@ type Event struct {
 	acker      Acker
 	putter     Putter
 
-	// Internal state for serialization
-	writeState int // Tracks which field we're writing
-	tc         trackCopy
+	// Internal state for serialization: the event is encoded once into
+	// readBuf on the first Read call and streamed out from there.
+	readBuf   []byte
+	readOff   int
+	readReady bool
 
 	// Internal buffer used to accumulate partial input across multiple Write
 	// calls. This allows the Write method to receive small chunks and
@@ -53,369 +57,104 @@ type Event struct {
 	writeBuf []byte
 }
 
-// resetReadWriteState resets the internal state used for reading and writing.
-// During the redelivery of events, we need to reset the state to ensure correct serialization.
-func (e *Event) resetReadWriteState() {
-	e.writeState = 0
-	e.tc.reset()
+// appendJSONString appends s to dst as a JSON string value (without the
+// surrounding quotes), escaping quotes, backslashes and control characters.
+func appendJSONString(dst []byte, s string) []byte {
+	start := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '"' && c != '\\' && c >= 0x20 {
+			continue
+		}
+		dst = append(dst, s[start:i]...)
+		switch c {
+		case '"':
+			dst = append(dst, '\\', '"')
+		case '\\':
+			dst = append(dst, '\\', '\\')
+		case '\n':
+			dst = append(dst, '\\', 'n')
+		case '\r':
+			dst = append(dst, '\\', 'r')
+		case '\t':
+			dst = append(dst, '\\', 't')
+		case '\b':
+			dst = append(dst, '\\', 'b')
+		case '\f':
+			dst = append(dst, '\\', 'f')
+		default:
+			const hex = "0123456789abcdef"
+			dst = append(dst, '\\', 'u', '0', '0', hex[c>>4], hex[c&0xf])
+		}
+		start = i + 1
+	}
+	return append(dst, s[start:]...)
 }
 
-// NOTE: I had to implement Read method to enhance the performance of the code
-// with the current implementation I gained around 50x performance improvement
-func (e *Event) Read(p []byte) (n int, err error) {
-	for len(p) > 0 {
-		switch e.writeState {
-		case 0:
-			{
-				n1 := e.tc.Copy(p, []byte(`{`), 0)
-				n += n1
-				p = p[n1:]
-				if n1 < 1 {
-					return n, nil
-				}
-				e.writeState = 1
-			}
+// appendJSON serializes the event as a compact JSON object, appending to dst.
+// This is the single source of truth for the event wire format.
+func (e *Event) appendJSON(dst []byte) []byte {
+	dst = append(dst, `{"id":"`...)
+	dst = appendJSONString(dst, e.Id)
+	dst = append(dst, '"')
 
-		case 1: // Write "id" field
-			{
-				field := []byte(`"id":"`)
-				n1 := e.tc.Copy(p, field, 1)
-				n += n1
-				p = p[n1:]
-				if n1 < len(field) {
-					return n, nil
-				}
-
-				e.writeState = 2
-			}
-
-		case 2: // Write Id value
-			{
-				if len(e.Id) == 0 {
-					e.writeState = 3
-					continue
-				}
-
-				n1 := e.tc.Copy(p, []byte(e.Id), 2)
-				n += n1
-				p = p[n1:]
-				if n1 < len(e.Id) {
-					return n, nil
-				}
-
-				e.writeState = 3
-			}
-
-		case 3: // close "id" field
-			{
-				n1 := e.tc.Copy(p, []byte(`"`), 3)
-				n += n1
-				p = p[n1:]
-				if n1 < 1 {
-					return n, nil
-				}
-
-				e.writeState = 4
-			}
-
-		case 4: // Write "trace_id" field
-			{
-				if len(e.TraceId) == 0 {
-					e.writeState = 7 // skip trace_id field
-					continue
-				}
-
-				field := []byte(`,"trace_id":"`)
-				n1 := e.tc.Copy(p, field, 4)
-				n += n1
-				p = p[n1:]
-				if n1 < len(field) {
-					return n, nil
-				}
-
-				e.writeState = 5
-			}
-
-		case 5: // Write TraceId value
-			{
-				n1 := e.tc.Copy(p, []byte(e.TraceId), 5)
-				n += n1
-				p = p[n1:]
-				if n1 < len(e.TraceId) {
-					return n, nil
-				}
-
-				e.writeState = 6
-			}
-
-		case 6: // close "trace_id" field
-			{
-				n1 := e.tc.Copy(p, []byte(`"`), 6)
-				n += n1
-				p = p[n1:]
-				if n1 < 1 {
-					return n, nil
-				}
-
-				e.writeState = 7
-			}
-
-		case 7: // Write "key" field
-			{
-				if len(e.Key) == 0 {
-					e.writeState = 10 // skip key field
-					continue
-				}
-
-				field := []byte(`,"key":"`)
-				n1 := e.tc.Copy(p, field, 7)
-				n += n1
-				p = p[n1:]
-				if n1 < len(field) {
-					return n, nil
-				}
-
-				e.writeState = 8
-			}
-
-		case 8: // Write Key value
-			{
-				n1 := e.tc.Copy(p, []byte(e.Key), 8)
-				n += n1
-				p = p[n1:]
-				if n1 < len(e.Key) {
-					return n, nil
-				}
-
-				e.writeState = 9
-			}
-
-		case 9: // close "key" field
-			{
-				n1 := e.tc.Copy(p, []byte(`"`), 9)
-				n += n1
-				p = p[n1:]
-				if n1 < 1 {
-					return n, nil
-				}
-
-				e.writeState = 10
-			}
-
-		case 10: // Write "subject" field
-			{
-				field := []byte(`,"subject":"`)
-				n1 := e.tc.Copy(p, field, 10)
-				n += n1
-				p = p[n1:]
-				if n1 < len(field) {
-					return n, nil
-				}
-
-				e.writeState = 11
-			}
-
-		case 11: // Write Subject value
-			{
-				n1 := e.tc.Copy(p, []byte(e.Subject), 11)
-				n += n1
-				p = p[n1:]
-				if n1 < len(e.Subject) {
-					return n, nil
-				}
-
-				e.writeState = 12
-			}
-
-		case 12: // close "subject" field
-			{
-				n1 := e.tc.Copy(p, []byte(`"`), 12)
-				n += n1
-				p = p[n1:]
-				if n1 < 1 {
-					return n, nil
-				}
-
-				e.writeState = 13
-			}
-
-		case 13: // Write "response_subject" field
-			{
-				if len(e.ResponseSubject) == 0 {
-					e.writeState = 16 // skip response_subject field
-					continue
-				}
-
-				field := []byte(`,"response_subject":"`)
-				n1 := e.tc.Copy(p, field, 13)
-				n += n1
-				p = p[n1:]
-				if n1 < len(field) {
-					return n, nil
-				}
-
-				e.writeState = 14
-			}
-
-		case 14: // Write ResponseSubject value
-			{
-				n1 := e.tc.Copy(p, []byte(e.ResponseSubject), 14)
-				n += n1
-				p = p[n1:]
-				if n1 < len(e.ResponseSubject) {
-					return n, nil
-				}
-
-				e.writeState = 15
-			}
-
-		case 15: // close "response_subject" field
-			{
-				n1 := e.tc.Copy(p, []byte(`"`), 15)
-				n += n1
-				p = p[n1:]
-				if n1 < 1 {
-					return n, nil
-				}
-
-				e.writeState = 16
-			}
-
-		case 16: // Write "created_at" field
-			{
-				field := []byte(`,"created_at":"`)
-				n1 := e.tc.Copy(p, field, 16)
-				n += n1
-				p = p[n1:]
-				if n1 < len(field) {
-					return n, nil
-				}
-
-				e.writeState = 17
-			}
-
-		case 17: // Write CreatedAt value
-			{
-				createdAt := e.CreatedAt.Format(time.RFC3339)
-				n1 := e.tc.Copy(p, []byte(createdAt), 17)
-				n += n1
-				p = p[n1:]
-				if n1 < len(createdAt) {
-					return n, nil
-				}
-
-				e.writeState = 18
-			}
-
-		case 18: // close "created_at" field
-			{
-				n1 := e.tc.Copy(p, []byte(`"`), 18)
-				n += n1
-				p = p[n1:]
-				if n1 < 1 {
-					return n, nil
-				}
-
-				e.writeState = 19
-			}
-
-		case 19: // Write "payload" field
-			{
-				if len(e.Payload) == 0 {
-					e.writeState = 21 // skip payload field
-					continue
-				}
-
-				field := []byte(`,"payload":`)
-				n1 := e.tc.Copy(p, field, 19)
-				n += n1
-				p = p[n1:]
-				if n1 < len(field) {
-					return n, nil
-				}
-
-				e.writeState = 20
-			}
-
-		case 20: // Write Payload value
-			{
-				n1 := e.tc.Copy(p, e.Payload, 20)
-				n += n1
-				p = p[n1:]
-				if n1 < len(e.Payload) {
-					return n, nil
-				}
-
-				e.writeState = 21
-			}
-
-		case 21: // Write Index
-			{
-				if e.Index == 0 {
-					e.writeState = 23 // skip index field
-					continue
-				}
-
-				field := []byte(`,"index":`)
-				n1 := e.tc.Copy(p, field, 21)
-				n += n1
-				p = p[n1:]
-				if n1 < len(field) {
-					return n, nil
-				}
-
-				e.writeState = 22
-			}
-
-		case 22: // Write Index value
-			{
-				index := strconv.FormatInt(e.Index, 10)
-				n1 := e.tc.Copy(p, []byte(index), 22)
-				n += n1
-				p = p[n1:]
-				if n1 < len(index) {
-					return n, nil
-				}
-
-				e.writeState = 23
-			}
-
-		case 23: // close
-			{
-				n1 := e.tc.Copy(p, []byte(`}`), 23)
-				n += n1
-				p = p[n1:]
-				if n1 < 1 {
-					return n, nil
-				}
-
-				e.writeState = 24
-			}
-
-		default:
-			return n, io.EOF
-		}
+	if e.TraceId != "" {
+		dst = append(dst, `,"trace_id":"`...)
+		dst = appendJSONString(dst, e.TraceId)
+		dst = append(dst, '"')
 	}
 
-	return n, nil
+	if e.Key != "" {
+		dst = append(dst, `,"key":"`...)
+		dst = appendJSONString(dst, e.Key)
+		dst = append(dst, '"')
+	}
+
+	dst = append(dst, `,"subject":"`...)
+	dst = appendJSONString(dst, e.Subject)
+	dst = append(dst, '"')
+
+	if e.ResponseSubject != "" {
+		dst = append(dst, `,"response_subject":"`...)
+		dst = appendJSONString(dst, e.ResponseSubject)
+		dst = append(dst, '"')
+	}
+
+	dst = append(dst, `,"created_at":"`...)
+	dst = e.CreatedAt.AppendFormat(dst, time.RFC3339Nano)
+	dst = append(dst, '"')
+
+	if len(e.Payload) > 0 {
+		dst = append(dst, `,"payload":`...)
+		dst = append(dst, e.Payload...)
+	}
+
+	if e.Index != 0 {
+		dst = append(dst, `,"index":`...)
+		dst = strconv.AppendInt(dst, e.Index, 10)
+	}
+
+	return append(dst, '}')
 }
 
-// buffer for incremental writes
-// This buffer is used to accumulate partial input across multiple Write calls
-// so that writes with small chunks (e.g. when using io.MultiReader) can be
-// processed correctly.
-// NOTE: kept as a byte slice to keep the struct simple and avoid races if the
-// Event is reused concurrently (the tests call Write from one goroutine).
-// The buffer grows as needed and we slice off the consumed prefix after a
-// successful parse.
-//
-// It's unexported and only used by the Write method.
-//
-// Placed here since it conceptually belongs to Event's read/write state.
+// Read implements io.Reader. The event is serialized once into an internal
+// buffer on the first call and streamed out from there; call
+// resetReadWriteState (internal) to serialize the event again after mutation.
+func (e *Event) Read(p []byte) (n int, err error) {
+	if !e.readReady {
+		e.readBuf = e.appendJSON(e.readBuf[:0])
+		e.readOff = 0
+		e.readReady = true
+	}
 
-// add the following field to Event struct near the top (we will append it right here)
+	if e.readOff >= len(e.readBuf) {
+		return 0, io.EOF
+	}
 
-// (insertion point - we will replace the function body below)
+	n = copy(p, e.readBuf[e.readOff:])
+	e.readOff += n
+	return n, nil
+}
 
 func (e *Event) Write(b []byte) (int, error) {
 	if len(b) == 0 {
@@ -499,10 +238,45 @@ func parseNumber(b []byte) (string, int, error) {
 	return string(b[:pos]), pos, nil
 }
 
+// parseHex4 parses exactly 4 hex digits.
+func parseHex4(b []byte) (uint16, bool) {
+	var v uint16
+	for _, c := range b {
+		v <<= 4
+		switch {
+		case c >= '0' && c <= '9':
+			v |= uint16(c - '0')
+		case c >= 'a' && c <= 'f':
+			v |= uint16(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			v |= uint16(c-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return v, true
+}
+
 // Helper function to parse a JSON string
 func parseString(b []byte) (string, int, error) {
 	if len(b) == 0 || b[0] != '"' {
 		return "", 0, errors.New("expected string")
+	}
+
+	// fast path: no escape sequences before the closing quote
+	hasEscape := false
+	for i := 1; i < len(b); i++ {
+		c := b[i]
+		if c == '"' {
+			return string(b[1:i]), i + 1, nil
+		}
+		if c == '\\' {
+			hasEscape = true
+			break
+		}
+	}
+	if !hasEscape {
+		return "", 0, io.ErrUnexpectedEOF
 	}
 
 	pos := 1
@@ -527,6 +301,37 @@ func parseString(b []byte) (string, int, error) {
 				result.WriteByte('\r')
 			case 't':
 				result.WriteByte('\t')
+			case 'u':
+				if pos+4 >= len(b) {
+					return "", 0, io.ErrUnexpectedEOF
+				}
+				r1, ok := parseHex4(b[pos+1 : pos+5])
+				if !ok {
+					return "", 0, errors.New("invalid unicode escape")
+				}
+				pos += 4
+				r := rune(r1)
+				if utf16.IsSurrogate(r) {
+					// a high surrogate must be followed by a \uXXXX low surrogate
+					if pos+2 >= len(b) {
+						return "", 0, io.ErrUnexpectedEOF
+					}
+					if b[pos+1] == '\\' && b[pos+2] == 'u' {
+						if pos+6 >= len(b) {
+							return "", 0, io.ErrUnexpectedEOF
+						}
+						if r2, ok2 := parseHex4(b[pos+3 : pos+7]); ok2 {
+							if combined := utf16.DecodeRune(r, rune(r2)); combined != utf8.RuneError {
+								result.WriteRune(combined)
+								pos += 6
+								break
+							}
+						}
+					}
+					result.WriteRune(utf8.RuneError)
+				} else {
+					result.WriteRune(r)
+				}
 			default:
 				return "", 0, errors.New("invalid escape sequence")
 			}
@@ -926,7 +731,7 @@ func (s *Response) String() string {
 	sb.WriteString(s.Id)
 	if s.Index != -1 {
 		sb.WriteString(", index: ")
-		sb.WriteString(fmt.Sprintf("%d", s.Index))
+		sb.WriteString(strconv.FormatInt(s.Index, 10))
 	}
 	sb.WriteString(", created_at: ")
 	sb.WriteString(s.CreatedAt.Format(time.RFC3339Nano))
@@ -978,6 +783,7 @@ type getOpt struct {
 	ackStrategy     string
 	redelivery      time.Duration
 	redeliveryCount int
+	redeliverySet   bool
 	start           string
 	metaFn          func(map[string]string)
 }
@@ -1091,6 +897,7 @@ func WithDelivery(duration time.Duration, redeliveryCount int) GetOpt {
 
 		g.redelivery = duration
 		g.redeliveryCount = redeliveryCount
+		g.redeliverySet = true
 		return nil
 	})
 }

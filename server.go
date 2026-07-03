@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"ella.to/bus/cache"
 	"ella.to/immuta"
 	"ella.to/sse"
-	"ella.to/task"
+
+	"ella.to/bus/internal/cache"
 )
 
 //
@@ -29,10 +29,22 @@ const (
 	HeaderEventCreatedAt = "X-BUS-EVENT-CREATED-AT"
 	HeaderEventIndex     = "X-BUS-EVENT-INDEX"
 	HeaderConsumerId     = "X-BUS-CONSUMER-ID"
+	headerLastEventId    = "Last-Event-ID"
 )
 
 const (
 	DefaultSsePingTimeout = 30 * time.Second
+
+	// busNamespace is the reserved namespace used for ephemeral inbox
+	// subjects (request/reply and confirm). Events published to it are
+	// routed in memory to currently connected consumers and are NOT
+	// persisted to the events log.
+	busNamespace = "_bus_"
+
+	// inboxBufferSize is the per-consumer buffer of pending inbox events.
+	// Inbox consumers are request/reply waiters, so this only needs to
+	// absorb short bursts of replies.
+	inboxBufferSize = 256
 )
 
 type DuplicateChecker interface {
@@ -47,12 +59,85 @@ func (f DuplicateCheckerFunc) CheckDuplicate(key string, subject string) bool {
 	return f(key, subject)
 }
 
+// inboxMsg is a fully serialized event ready to be pushed over SSE.
+type inboxMsg struct {
+	id   string
+	data string
+}
+
+// inbox routes events published to _bus_.* subjects directly to connected
+// consumers, in memory. Inbox subjects are point-to-point and ephemeral by
+// design: the requester subscribes before publishing the request, so there
+// is nothing to replay and no reason to grow the events log with them.
+type inbox struct {
+	mu   sync.RWMutex
+	subs map[string]map[chan inboxMsg]struct{}
+}
+
+func newInbox() *inbox {
+	return &inbox{
+		subs: make(map[string]map[chan inboxMsg]struct{}),
+	}
+}
+
+func (ib *inbox) subscribe(subject string) chan inboxMsg {
+	ch := make(chan inboxMsg, inboxBufferSize)
+	ib.mu.Lock()
+	set, ok := ib.subs[subject]
+	if !ok {
+		set = make(map[chan inboxMsg]struct{})
+		ib.subs[subject] = set
+	}
+	set[ch] = struct{}{}
+	ib.mu.Unlock()
+	return ch
+}
+
+func (ib *inbox) unsubscribe(subject string, ch chan inboxMsg) {
+	ib.mu.Lock()
+	if set, ok := ib.subs[subject]; ok {
+		delete(set, ch)
+		if len(set) == 0 {
+			delete(ib.subs, subject)
+		}
+	}
+	ib.mu.Unlock()
+}
+
+// publish delivers msg to every consumer of the exact subject. It never
+// blocks: a consumer that has fallen inboxBufferSize messages behind loses
+// the message (inbox replies are only meaningful to a live waiter).
+func (ib *inbox) publish(subject string, msg inboxMsg) {
+	ib.mu.RLock()
+	defer ib.mu.RUnlock()
+
+	for ch := range ib.subs[subject] {
+		select {
+		case ch <- msg:
+		default:
+			logger.Warn("inbox consumer too slow, dropping reply", "subject", subject, "event_id", msg.id)
+		}
+	}
+}
+
 type Handler struct {
-	mux           *http.ServeMux
-	eventsLog     *immuta.Storage
-	waitingAckMap map[string]chan struct{} // {consumerId-eventId} -> ack
-	runner        task.Runner
-	dupChecker    DuplicateChecker
+	mux        *http.ServeMux
+	eventsLog  *immuta.Storage
+	dupChecker DuplicateChecker
+	inbox      *inbox
+
+	// waitingAckMap holds one channel per in-flight manual-ack delivery,
+	// keyed by consumerId-eventId. Guarded by ackMu.
+	ackMu         sync.Mutex
+	waitingAckMap map[string]chan struct{}
+
+	// appendLocks serializes appends per namespace: immuta's Append/Save
+	// pair is single-writer. Different namespaces append in parallel.
+	appendLocks sync.Map // namespace -> *sync.Mutex
+
+	// bufPool recycles scratch buffers used to read records and serialize
+	// events, so the hot paths do not allocate per event.
+	bufPool sync.Pool // *[]byte
 }
 
 func (h *Handler) Close() error {
@@ -63,12 +148,63 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
+func (h *Handler) getBuf() *[]byte {
+	if b, ok := h.bufPool.Get().(*[]byte); ok {
+		return b
+	}
+	b := make([]byte, 0, 4096)
+	return &b
+}
+
+func (h *Handler) putBuf(b *[]byte) {
+	// don't let one huge payload pin memory forever
+	if cap(*b) > 1<<20 {
+		return
+	}
+	h.bufPool.Put(b)
+}
+
+func (h *Handler) namespaceLock(namespace string) *sync.Mutex {
+	if mu, ok := h.appendLocks.Load(namespace); ok {
+		return mu.(*sync.Mutex)
+	}
+	mu, _ := h.appendLocks.LoadOrStore(namespace, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
+// appendEvents serializes and appends the given events to the namespace log
+// as a single committed transaction, and returns the index of the first
+// appended event.
+func (h *Handler) appendEvents(ctx context.Context, namespace string, events []Event) (firstIndex int64, err error) {
+	buf := h.getBuf()
+	defer h.putBuf(buf)
+
+	mu := h.namespaceLock(namespace)
+	mu.Lock()
+	defer mu.Unlock()
+	defer h.eventsLog.Save(namespace, &err)
+
+	firstIndex = -1
+	for i := range events {
+		*buf = events[i].appendJSON((*buf)[:0])
+		index, _, aerr := h.eventsLog.Append(ctx, namespace, bytes.NewReader(*buf))
+		if aerr != nil {
+			err = aerr
+			return -1, err
+		}
+		if firstIndex == -1 {
+			firstIndex = index
+		}
+	}
+
+	return firstIndex, nil
+}
+
 // Put handles incoming events - delegates to putBatch or putSingle based on content
 func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	// Read the entire body
-	body, err := io.ReadAll(io.LimitReader(r.Body, 10))
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -80,22 +216,47 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set body for handlers to use
-	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(trimmed), r.Body))
-
 	if trimmed[0] == '[' {
-		h.putBatch(w, r)
+		h.putBatch(w, r, trimmed)
 	} else {
-		h.putSingle(w, r)
+		h.putSingle(w, r, trimmed)
 	}
 }
 
-// putBatch handles batch event submissions (JSON array of events)
-func (h *Handler) putBatch(w http.ResponseWriter, r *http.Request) {
+// prepareEvent validates an incoming event and assigns the server-side
+// fields (id, created_at). Returns the event's namespace.
+func (h *Handler) prepareEvent(e *Event) (string, int, error) {
+	if err := e.validate(); err != nil {
+		return "", http.StatusBadRequest, err
+	}
+
+	if h.dupChecker != nil && h.dupChecker.CheckDuplicate(e.Key, e.Subject) {
+		return "", http.StatusConflict, errors.New("key was processed before")
+	}
+
+	if e.Id == "" {
+		e.Id = newEventId()
+	}
+
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now()
+	}
+
+	namespace := extractNamespace(e.Subject)
+	if namespace == "" {
+		return "", http.StatusBadRequest, errors.New("invalid subject: missing namespace")
+	}
+
+	return namespace, 0, nil
+}
+
+// putBatch handles batch event submissions (JSON array of events).
+// All events must share one namespace and are committed atomically.
+func (h *Handler) putBatch(w http.ResponseWriter, r *http.Request, body []byte) {
 	ctx := r.Context()
 
 	var events []Event
-	if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+	if err := json.Unmarshal(body, &events); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -106,37 +267,23 @@ func (h *Handler) putBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var groupNamespace string
-
-	// Validate and initialize all events
 	for i := range events {
 		e := &events[i]
-
-		if err := e.validate(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
 
 		if e.ResponseSubject != "" {
 			http.Error(w, "batch items must not have response subject", http.StatusBadRequest)
 			return
 		}
 
-		if h.dupChecker != nil && h.dupChecker.CheckDuplicate(e.Key, e.Subject) {
-			http.Error(w, "key was processed before", http.StatusConflict)
+		namespace, code, err := h.prepareEvent(e)
+		if err != nil {
+			http.Error(w, err.Error(), code)
 			return
 		}
 
-		if e.Id == "" {
-			e.Id = newEventId()
-		}
-
-		if e.CreatedAt.IsZero() {
-			e.CreatedAt = time.Now()
-		}
-
-		namespace := extractNamespace(events[i].Subject)
-		if namespace == "" {
-			http.Error(w, "invalid subject: missing namespace", http.StatusBadRequest)
+		if namespace == busNamespace {
+			http.Error(w, "batch cannot publish to the reserved _bus_ namespace", http.StatusBadRequest)
+			return
 		}
 
 		if groupNamespace == "" {
@@ -147,22 +294,7 @@ func (h *Handler) putBatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Append all events atomically
-	err := h.runner.Submit(ctx, func(ctx context.Context) error {
-		for i := range events {
-			_, _, err := h.eventsLog.Append(ctx, groupNamespace, &events[i])
-			if err != nil {
-				return err
-			}
-			// commit the append as previously done by Append's internal defer
-			h.eventsLog.Save(groupNamespace, &err)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}).Await(ctx)
-	if err != nil {
+	if _, err := h.appendEvents(ctx, groupNamespace, events); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -171,57 +303,43 @@ func (h *Handler) putBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // putSingle handles single event submissions
-func (h *Handler) putSingle(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) putSingle(w http.ResponseWriter, r *http.Request, body []byte) {
 	ctx := r.Context()
 
 	var event Event
-	if _, err := io.Copy(&event, r.Body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if err := event.validate(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if h.dupChecker != nil && h.dupChecker.CheckDuplicate(event.Key, event.Subject) {
-		http.Error(w, "key was processed before", http.StatusConflict)
-		return
-	}
-
-	if event.Id == "" {
-		event.Id = newEventId()
-	}
-
-	if event.CreatedAt.IsZero() {
-		event.CreatedAt = time.Now()
-	}
-
-	namespace := extractNamespace(event.Subject)
-	if namespace == "" {
-		http.Error(w, "invalid subject: missing namespace", http.StatusBadRequest)
-		return
-	}
-
-	var eventIndex int64
-	err := h.runner.Submit(ctx, func(ctx context.Context) (err error) {
-		eventIndex, _, err = h.eventsLog.Append(ctx, namespace, &event)
-		if err != nil {
-			return err
+	if _, err := tryParseEvent(body, &event); err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			err = errors.New("incomplete event")
 		}
-		// commit the append
-		h.eventsLog.Save(namespace, &err)
-		return err
-	}).Await(ctx)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	namespace, code, err := h.prepareEvent(&event)
+	if err != nil {
+		http.Error(w, err.Error(), code)
+		return
+	}
+
+	eventIndex := int64(-1)
+
+	if namespace == busNamespace {
+		// inbox events are routed in memory to live consumers only
+		buf := h.getBuf()
+		*buf = event.appendJSON((*buf)[:0])
+		h.inbox.publish(event.Subject, inboxMsg{id: event.Id, data: string(*buf)})
+		h.putBuf(buf)
+	} else {
+		eventIndex, err = h.appendEvents(ctx, namespace, []Event{event})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set(HeaderEventId, event.Id)
 	w.Header().Set(HeaderEventCreatedAt, event.CreatedAt.Format(time.RFC3339Nano))
-	w.Header().Set(HeaderEventIndex, fmt.Sprintf("%d", eventIndex))
+	w.Header().Set(HeaderEventIndex, strconv.FormatInt(eventIndex, 10))
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -231,6 +349,28 @@ func extractNamespace(subject string) string {
 		return before
 	}
 	return ""
+}
+
+// namespaceCount returns the number of committed events in the namespace.
+// It is used to snapshot the log position for start=newest and to bound the
+// scan for start=<event-id>. The namespace append lock is held while reading:
+// immuta updates its counters during Save without synchronization, and every
+// append goes through that same lock.
+func (h *Handler) namespaceCount(ctx context.Context, namespace string) (int64, error) {
+	mu := h.namespaceLock(namespace)
+	mu.Lock()
+	details, err := h.eventsLog.Details(ctx, namespace)
+	mu.Unlock()
+	if err != nil {
+		return -1, err
+	}
+
+	var size, count int64
+	if _, err := fmt.Sscanf(details, "size: %d, count: %d", &size, &count); err != nil {
+		return -1, fmt.Errorf("failed to parse namespace details %q: %w", details, err)
+	}
+
+	return count, nil
 }
 
 // GET /?subject=a.b.*&start=oldest&ack=manual&redelivery=5s&redelivery_count=3
@@ -256,8 +396,38 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	namespace := extractNamespace(subject)
+	if namespace == "" {
+		http.Error(w, "invalid subject: missing namespace", http.StatusBadRequest)
+		return
+	}
+	if strings.ContainsAny(namespace, "*>") {
+		http.Error(w, "subject namespace cannot contain wildcards", http.StatusBadRequest)
+		return
+	}
+
+	// SSE clients reconnect with the id of the last event they received;
+	// resuming from there (exclusive) takes precedence over the start
+	// parameter so no events are lost or duplicated across reconnects.
+	if lastEventId := r.Header.Get(headerLastEventId); strings.HasPrefix(lastEventId, "e_") {
+		start = lastEventId
+	}
+
 	logger.InfoContext(ctx, "new consumer", "id", id, "subject", subject, "start", start, "ack", ack, "redelivery", redelivery, "redelivery_count", redeliveryCount)
 	defer logger.InfoContext(ctx, "consumer closed", "id", id)
+
+	if namespace == busNamespace {
+		h.getInbox(w, r, id, subject)
+		return
+	}
+
+	// snapshot the committed event count: it is the position for
+	// start=newest, and the upper bound of the start=<event-id> scan
+	count, err := h.namespaceCount(ctx, namespace)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	var startPos int64
 	switch start {
@@ -265,19 +435,16 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		startPos = 0
 		start = ""
 	case StartNewest:
-		startPos = -1
+		// start right after every event committed so far
+		startPos = count
 		start = ""
 	default:
-		// I wrote it like this to indicate the reader that
-		// we will start from the beginning of events log and
-		// loop through all events until we find the event id associate
-		// with start variable
+		// start holds an event id: scan from the beginning until we find
+		// it, then deliver everything after it
 		startPos = 0
 	}
 
-	namespaceIdx := strings.Index(subject, ".")
-
-	stream := h.eventsLog.Stream(ctx, subject[:namespaceIdx], startPos)
+	stream := h.eventsLog.Stream(ctx, namespace, startPos)
 	defer stream.Done()
 
 	w.Header().Set(HeaderConsumerId, id)
@@ -289,115 +456,185 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	defer pusher.Close()
 
+	buf := h.getBuf()
+	defer h.putBuf(buf)
+
+	// reusable timer for manual-ack redelivery waits
+	var ackTimer *time.Timer
+	defer func() {
+		if ackTimer != nil {
+			ackTimer.Stop()
+		}
+	}()
+
+	var scanned int64
+
 	for {
-		r, _, err := stream.Next(ctx)
+		rd, size, err := stream.Next(ctx)
 		if errors.Is(err, context.Canceled) || errors.Is(err, immuta.ErrStorageClosed) {
 			// the client has closed the connection or the server is shutting down
-			// in both cases we should return and the defer will send the done message and also close the pusher
 			return
 		} else if err != nil {
 			_ = pusher.Push(newSseError(err))
 			return
 		}
 
-		var event Event
-		_, err = io.Copy(&event, r)
-		r.Done()
+		if int64(cap(*buf)) < size {
+			*buf = make([]byte, size)
+		}
+		record := (*buf)[:size]
+		_, err = io.ReadFull(rd, record)
+		rd.Done()
+		if err != nil {
+			_ = pusher.Push(newSseError(err))
+			continue
+		}
+
+		eventId, eventSubject, err := extractIdSubject(record)
 		if err != nil {
 			_ = pusher.Push(newSseError(err))
 			continue
 		}
 
 		if start != "" {
-			if event.Id == start {
-				// we found the event id
-				// now we can start pushing events to the client
+			scanned++
+			if eventId == start {
+				// found the requested event; deliver everything after it
 				start = ""
-			}
-			continue
-		}
-
-		if !MatchSubject(event.Subject, subject) {
-			continue
-		}
-
-		key := getAckKey(id, event.Id)
-
-		var ch chan struct{}
-
-		if ack == AckManual {
-			ch = make(chan struct{})
-
-			setAckMapError := h.runner.Submit(ctx, func(ctx context.Context) error {
-				h.waitingAckMap[key] = ch
-				return nil
-			}).Await(ctx)
-			if setAckMapError != nil {
-				logger.ErrorContext(ctx, "failed to set signal channel for acking message", "error", setAckMapError, "consumer_id", id, "event_id", event.Id)
-				_ = pusher.Push(newSseError(setAckMapError))
-				continue
-			}
-		}
-
-		redeliveryCoutnEnabled := ack == AckManual && redeliveryCount > 0
-		redeliveryCountAttempted := 0
-
-		for {
-			// reset the read/write state before redelivery
-			// this is essential to ensure correct serialization when we copy the event to sse message
-			// without this, the event will be sent empty after the first delivery
-			event.resetReadWriteState()
-
-			// NOTE: we are creating a new SSE msg since msg has some
-			// io.Read and io.Write internal variables which are essential to
-			// io.Copy
-			msg, err := newSseEvent(&event)
-			if err != nil {
-				logger.WarnContext(ctx, "failed to create a sse message from event", "error", err, "event_id", event.Id, "consumer_id", id)
-				_ = pusher.Push(newSseError(err))
-				break
-			}
-
-			err = pusher.Push(msg)
-			if err != nil {
-				logger.WarnContext(ctx, "failed to push sse message to consumer", "error", err, "event_id", event.Id, "consumer_id", id)
-				h.runner.Submit(ctx, func(ctx context.Context) error {
-					delete(h.waitingAckMap, key)
-					return nil
-				})
+			} else if scanned >= count {
+				// the id is not in the log; error out instead of silently
+				// never delivering anything
+				_ = pusher.Push(newSseError(fmt.Errorf("start event id %s not found in namespace %s", start, namespace)))
 				return
 			}
+			continue
+		}
 
-			if ack == AckManual {
-				select {
-				case <-ctx.Done():
-					h.runner.Submit(ctx, func(ctx context.Context) error {
-						delete(h.waitingAckMap, key)
-						return nil
-					})
-					return
-				case <-ch:
-					// ack received, the ch signal will be deleted by Ack function
-					logger.DebugContext(ctx, "received acked", "consumer_id", id, "event_id", event.Id)
-					break
-				case <-time.After(redelivery):
-					redeliveryCountAttempted++
+		if !MatchSubject(eventSubject, subject) {
+			continue
+		}
 
-					_ = h.runner.Submit(ctx, func(ctx context.Context) error {
-						delete(h.waitingAckMap, key)
-						return nil
-					}).Await(ctx)
+		msg := &sse.Message{
+			Id:    eventId,
+			Event: msgType,
+			Data:  string(record),
+		}
 
-					if redeliveryCoutnEnabled && redeliveryCountAttempted >= redeliveryCount {
-						logger.WarnContext(ctx, "redelivery count exceeded, dropping event", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId)
-						break
-					}
-
-					logger.WarnContext(ctx, "redelivery", "consumer_id", id, "event_id", event.Id, "subject", event.Subject, "trace_id", event.TraceId, "redelivery_attempt_count", redeliveryCountAttempted)
-					continue
-				}
+		if ack != AckManual {
+			if err := pusher.Push(msg); err != nil {
+				logger.WarnContext(ctx, "failed to push sse message to consumer", "error", err, "event_id", eventId, "consumer_id", id)
+				return
 			}
-			break
+			continue
+		}
+
+		if !h.deliverManualAck(ctx, pusher, msg, id, eventId, eventSubject, redelivery, redeliveryCount, &ackTimer) {
+			return
+		}
+	}
+}
+
+// deliverManualAck pushes msg and waits for the consumer's ack, redelivering
+// on timeout up to redeliveryCount attempts (or indefinitely if
+// redeliveryCount <= 0). It reports whether the consumer connection is still
+// usable.
+func (h *Handler) deliverManualAck(
+	ctx context.Context,
+	pusher sse.Pusher,
+	msg *sse.Message,
+	consumerId string,
+	eventId string,
+	eventSubject string,
+	redelivery time.Duration,
+	redeliveryCount int,
+	ackTimer **time.Timer,
+) bool {
+	key := getAckKey(consumerId, eventId)
+	limited := redeliveryCount > 0
+
+	for attempt := 1; ; attempt++ {
+		// a fresh channel is registered before every attempt: the previous
+		// attempt's channel was removed on timeout, and an ack that raced
+		// the timeout must still be able to find an entry to close.
+		ch := make(chan struct{})
+		h.ackMu.Lock()
+		h.waitingAckMap[key] = ch
+		h.ackMu.Unlock()
+
+		if err := pusher.Push(msg); err != nil {
+			logger.WarnContext(ctx, "failed to push sse message to consumer", "error", err, "event_id", eventId, "consumer_id", consumerId)
+			h.removeAck(key)
+			return false
+		}
+
+		if *ackTimer == nil {
+			*ackTimer = time.NewTimer(redelivery)
+		} else {
+			(*ackTimer).Reset(redelivery)
+		}
+
+		select {
+		case <-ctx.Done():
+			(*ackTimer).Stop()
+			h.removeAck(key)
+			return false
+
+		case <-ch:
+			// acked; the entry was already removed by the Ack handler
+			(*ackTimer).Stop()
+			logger.DebugContext(ctx, "received ack", "consumer_id", consumerId, "event_id", eventId)
+			return true
+
+		case <-(*ackTimer).C:
+			h.removeAck(key)
+
+			if limited && attempt >= redeliveryCount {
+				logger.WarnContext(ctx, "redelivery count exceeded, dropping event", "consumer_id", consumerId, "event_id", eventId, "subject", eventSubject)
+				return true
+			}
+
+			logger.WarnContext(ctx, "redelivery", "consumer_id", consumerId, "event_id", eventId, "subject", eventSubject, "redelivery_attempt_count", attempt)
+		}
+	}
+}
+
+func (h *Handler) removeAck(key string) {
+	h.ackMu.Lock()
+	delete(h.waitingAckMap, key)
+	h.ackMu.Unlock()
+}
+
+// getInbox streams in-memory inbox events (_bus_.* subjects) to the consumer.
+// Inbox subjects are exact (no wildcards) and acking is not applicable.
+func (h *Handler) getInbox(w http.ResponseWriter, r *http.Request, id string, subject string) {
+	ctx := r.Context()
+
+	if strings.ContainsAny(subject, "*>") {
+		http.Error(w, "inbox subjects cannot contain wildcards", http.StatusBadRequest)
+		return
+	}
+
+	ch := h.inbox.subscribe(subject)
+	defer h.inbox.unsubscribe(subject, ch)
+
+	w.Header().Set(HeaderConsumerId, id)
+
+	pusher, err := sse.CreateHttpPusher(w, sse.WithHttpPusherPingDuration(DefaultSsePingTimeout))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer pusher.Close()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-ch:
+			if err := pusher.Push(&sse.Message{Id: msg.id, Event: msgType, Data: msg.data}); err != nil {
+				logger.WarnContext(ctx, "failed to push inbox message to consumer", "error", err, "event_id", msg.id, "consumer_id", id)
+				return
+			}
 		}
 	}
 }
@@ -433,21 +670,17 @@ func (h *Handler) Ack(w http.ResponseWriter, r *http.Request) {
 
 	key := getAckKey(consumerId, eventId)
 
-	err := h.runner.Submit(ctx, func(ctx context.Context) error {
-		ack, ok := h.waitingAckMap[key]
-		if !ok {
-			logger.WarnContext(ctx, "failed to find ack channel key", "consumer_id", consumerId, "event_id", eventId)
-			return nil
-		}
-
+	h.ackMu.Lock()
+	ch, ok := h.waitingAckMap[key]
+	if ok {
 		delete(h.waitingAckMap, key)
-		close(ack)
+	}
+	h.ackMu.Unlock()
 
-		return nil
-	}).Await(ctx)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	if ok {
+		close(ch)
+	} else {
+		logger.WarnContext(ctx, "failed to find ack channel key", "consumer_id", consumerId, "event_id", eventId)
 	}
 
 	w.WriteHeader(http.StatusAccepted)
@@ -463,14 +696,14 @@ func CreateHandler(logsDirPath string, namespaces []string, secretKey string, bl
 			namespacesSet[ns] = struct{}{}
 		}
 
-		// NOTE: currently bus has an internal namespace "_bus_" which was used to store
-		// RPC and Confirm events. This namespace should not be consumed by the user.
-		if _, ok := namespacesSet["_bus_"]; ok {
+		// NOTE: the _bus_ namespace is reserved for ephemeral inbox subjects
+		// (request/reply, confirm) which are routed in memory and never
+		// touch the events log.
+		if _, ok := namespacesSet[busNamespace]; ok {
 			return nil, errors.New("namespace _bus_ is reserved")
 		}
 
-		namespaces = make([]string, 0, len(namespacesSet)+1)
-		namespaces = append(namespaces, "_bus_")
+		namespaces = make([]string, 0, len(namespacesSet))
 		for ns := range namespacesSet {
 			namespaces = append(namespaces, ns)
 		}
@@ -478,7 +711,7 @@ func CreateHandler(logsDirPath string, namespaces []string, secretKey string, bl
 
 	immutaOpts := []immuta.OptionFunc{
 		immuta.WithLogsDirPath(logsDirPath),
-		immuta.WithReaderCount(5),
+		immuta.WithReaderCount(16),
 		immuta.WithFastWrite(true),
 		immuta.WithNamespaces(namespaces...),
 	}
@@ -494,9 +727,7 @@ func CreateHandler(logsDirPath string, namespaces []string, secretKey string, bl
 		return nil, err
 	}
 
-	runner := task.NewRunner(task.WithWorkerSize(1))
-
-	return NewHandler(eventStorage, runner, dupChecker), nil
+	return NewHandler(eventStorage, dupChecker), nil
 }
 
 func DefaultDuplicateChecker(size int, ttl time.Duration) DuplicateChecker {
@@ -525,13 +756,13 @@ func DefaultDuplicateChecker(size int, ttl time.Duration) DuplicateChecker {
 	})
 }
 
-func NewHandler(eventLogs *immuta.Storage, runner task.Runner, dupChecker DuplicateChecker) *Handler {
+func NewHandler(eventLogs *immuta.Storage, dupChecker DuplicateChecker) *Handler {
 	h := &Handler{
 		mux:           http.NewServeMux(),
 		eventsLog:     eventLogs,
-		runner:        runner,
 		waitingAckMap: make(map[string]chan struct{}),
 		dupChecker:    dupChecker,
+		inbox:         newInbox(),
 	}
 
 	// Wrap handlers with CORS middleware
@@ -569,6 +800,160 @@ func handleOptions(w http.ResponseWriter, r *http.Request) {
 //
 // utilities
 //
+
+// extractIdSubject scans a serialized event and returns its id and subject
+// without parsing the rest of the record. This is the per-consumer hot path:
+// the raw record bytes are forwarded to the consumer as-is, so only these
+// two fields are ever needed server side.
+func extractIdSubject(b []byte) (id string, subject string, err error) {
+	pos := 0
+
+	skipWs := func() {
+		for pos < len(b) && (b[pos] == ' ' || b[pos] == '\n' || b[pos] == '\t' || b[pos] == '\r') {
+			pos++
+		}
+	}
+
+	skipWs()
+	if pos >= len(b) || b[pos] != '{' {
+		return "", "", errors.New("expected opening brace")
+	}
+	pos++
+
+	haveId, haveSubject := false, false
+
+	for pos < len(b) {
+		skipWs()
+		if pos >= len(b) {
+			break
+		}
+		if b[pos] == '}' {
+			break
+		}
+		if b[pos] != '"' {
+			return "", "", errors.New("expected quote before field name")
+		}
+		fieldStart := pos + 1
+		pos++
+		for pos < len(b) && b[pos] != '"' {
+			pos++
+		}
+		if pos >= len(b) {
+			break
+		}
+		fieldEnd := pos
+		pos++
+		skipWs()
+		if pos >= len(b) || b[pos] != ':' {
+			return "", "", errors.New("expected colon after field name")
+		}
+		pos++
+		skipWs()
+		if pos >= len(b) {
+			break
+		}
+
+		field := b[fieldStart:fieldEnd]
+		switch {
+		case bytes.Equal(field, []byte("id")):
+			val, n, perr := parseString(b[pos:])
+			if perr != nil {
+				return "", "", perr
+			}
+			id = val
+			pos += n
+			haveId = true
+
+		case bytes.Equal(field, []byte("subject")):
+			val, n, perr := parseString(b[pos:])
+			if perr != nil {
+				return "", "", perr
+			}
+			subject = val
+			pos += n
+			haveSubject = true
+
+		default:
+			n, perr := skipJSONValue(b[pos:])
+			if perr != nil {
+				return "", "", perr
+			}
+			pos += n
+		}
+
+		if haveId && haveSubject {
+			return id, subject, nil
+		}
+
+		skipWs()
+		if pos < len(b) && b[pos] == ',' {
+			pos++
+		}
+	}
+
+	if haveId && haveSubject {
+		return id, subject, nil
+	}
+	return "", "", errors.New("event record missing id or subject")
+}
+
+// skipJSONValue returns the number of bytes occupied by the next JSON value.
+func skipJSONValue(b []byte) (int, error) {
+	if len(b) == 0 {
+		return 0, io.ErrUnexpectedEOF
+	}
+
+	switch b[0] {
+	case '"':
+		_, n, err := parseString(b)
+		return n, err
+
+	case '{', '[':
+		depth := 0
+		inString := false
+		pos := 0
+		for pos < len(b) {
+			c := b[pos]
+			if inString {
+				switch c {
+				case '\\':
+					pos++
+				case '"':
+					inString = false
+				}
+			} else {
+				switch c {
+				case '{', '[':
+					depth++
+				case '}', ']':
+					depth--
+					if depth == 0 {
+						return pos + 1, nil
+					}
+				case '"':
+					inString = true
+				}
+			}
+			pos++
+		}
+		return 0, io.ErrUnexpectedEOF
+
+	default:
+		// number, true, false, null
+		pos := 0
+		for pos < len(b) {
+			c := b[pos]
+			if c == ',' || c == '}' || c == ']' || c == ' ' || c == '\n' || c == '\t' || c == '\r' {
+				break
+			}
+			pos++
+		}
+		if pos == 0 {
+			return 0, errors.New("unexpected token")
+		}
+		return pos, nil
+	}
+}
 
 func getAckKey(consumerId, eventId string) string {
 	return consumerId + "-" + eventId
@@ -629,18 +1014,4 @@ func newSseError(err error) *sse.Message {
 		Event: errorType,
 		Data:  err.Error(),
 	}
-}
-
-func newSseEvent(event *Event) (*sse.Message, error) {
-	var sb strings.Builder
-
-	_, err := io.Copy(&sb, event)
-	if err != nil {
-		return nil, err
-	}
-
-	return &sse.Message{
-		Event: msgType,
-		Data:  sb.String(),
-	}, nil
 }

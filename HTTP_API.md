@@ -122,6 +122,13 @@ Subscribe to events from a subject using Server-Sent Events (SSE). This endpoint
 | `start` | string | No | `oldest`, `newest`, or event ID (e.g., `e_abc123`) | `newest` | Where to start consuming events from |
 | `ack` | string | No | `manual`, `none` | `none` | Acknowledgment strategy |
 | `redelivery` | duration | No | Valid duration (e.g., `5s`, `1m`, `30s`) | `5s` | Time to wait before redelivering unacknowledged messages (only used with `ack=manual`) |
+| `redelivery_count` | int | No | Any integer; `0` or negative means unlimited | `3` | Maximum delivery attempts before the event is dropped for this consumer (only used with `ack=manual`) |
+
+**Request Headers:**
+
+| Header | Description |
+|--------|-------------|
+| `Last-Event-ID` | Standard SSE resume header. When present (an event id such as `e_abc123`), the server resumes the stream right AFTER that event, taking precedence over the `start` parameter. Every streamed message carries its event id in the SSE `id:` field, so EventSource-compatible clients resume automatically after a reconnect without losing or duplicating events. |
 
 **Subject Patterns with Wildcards:**
 
@@ -139,7 +146,7 @@ Subjects in GET requests support wildcards for flexible subscriptions:
 |-------|-------------|
 | `oldest` | Start from the first event in the log |
 | `newest` | Start from new events only (don't replay history) |
-| `e_<id>` | Start from a specific event ID (e.g., `e_abc123`) |
+| `e_<id>` | Resume right AFTER a specific event ID (e.g., `e_abc123`). If the id does not exist in the namespace, the server sends an `error` SSE event and closes the stream instead of silently delivering nothing. |
 
 **Acknowledgment Strategies:**
 
@@ -295,6 +302,19 @@ sse.addEventListener('msg', async (event) => {
 |-------------|-------------|
 | `400 Bad Request` | Missing or invalid `consumer_id` or `event_id` parameter |
 | `500 Internal Server Error` | Failed to process acknowledgment |
+
+---
+
+## Inbox Subjects (`_bus_.*`)
+
+Subjects under the reserved `_bus_` namespace are ephemeral inbox subjects used by request/reply and confirm flows:
+
+- Events published to `_bus_.*` are routed **in memory** to consumers connected to that exact subject at that moment; they are **not persisted** to the events log.
+- Subscribe to the inbox subject **before** publishing the request; there is no replay for inbox subjects (`start` is ignored).
+- Wildcards are not allowed in inbox subjects.
+- The `_bus_` namespace does not need to be (and cannot be) declared at server startup.
+
+This keeps request/reply latency constant regardless of history size and prevents the log from growing with transient replies.
 
 ---
 

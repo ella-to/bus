@@ -9,10 +9,10 @@ import (
 	"log"
 	"time"
 
+	"ella.to/immuta"
 	"github.com/urfave/cli/v3"
 
 	"ella.to/bus"
-	"ella.to/immuta"
 )
 
 func DebugCommand() *cli.Command {

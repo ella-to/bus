@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"ella.to/bus"
 	"ella.to/immuta"
-	"ella.to/task"
+
+	"ella.to/bus"
 )
 
 func createBusServer(t *testing.T, eventLogsDir string) *bus.Client {
@@ -32,7 +32,7 @@ func createBusServer(t *testing.T, eventLogsDir string) *bus.Client {
 		t.Fatal(err)
 	}
 
-	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)), nil)
+	handler := bus.NewHandler(storage, nil)
 
 	server := httptest.NewServer(handler)
 
@@ -57,7 +57,7 @@ func createBusServerWithCompression(t *testing.T, eventLogsDir string) *bus.Clie
 		t.Fatal(err)
 	}
 
-	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)), nil)
+	handler := bus.NewHandler(storage, nil)
 
 	server := httptest.NewServer(handler)
 
@@ -304,7 +304,7 @@ func TestDuplicateCheckerDropsDuplicate(t *testing.T) {
 		return false
 	})
 
-	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)), dup)
+	handler := bus.NewHandler(storage, dup)
 	server := httptest.NewServer(handler)
 
 	t.Cleanup(func() {
@@ -597,7 +597,7 @@ func TestBatchDuplicateKeyRejected(t *testing.T) {
 		return key == "bad"
 	})
 
-	handler := bus.NewHandler(storage, task.NewRunner(task.WithWorkerSize(1)), dup)
+	handler := bus.NewHandler(storage, dup)
 	server := httptest.NewServer(handler)
 
 	t.Cleanup(func() {
